@@ -123,38 +123,15 @@ All URIs are relative to *http://localhost*
 Class | Method | HTTP request | Description
 ------------ | ------------- | ------------- | -------------
 *DatasetManagementApi* | [**get_dataset_version_archive_datasets_versions_archive_user_id_user_type_id_dataset_id_dataset_version_no_get**](docs/DatasetManagementApi.md#get_dataset_version_archive_datasets_versions_archive_user_id_user_type_id_dataset_id_dataset_version_no_get) | **GET** /datasets/datasetEntities/{user_id}/{user_type_id} | Get Dataset Version
-*DatasetManagementApi* | [**get_dataset_entities_datasets_dataset_entities_user_id_user_type_id_dataset_id_get**](docs/DatasetManagementApi.md#get_dataset_entities_datasets_dataset_entities_user_id_user_type_id_dataset_id_get) | **GET** /datasets/datasetEntities/{user_id}/{user_type_id}/{dataset_id} | Get Dataset Entities
-*DatasetManagementApi* | [**get_dataset_item_datasets_dataset_entities_user_id_user_type_id_dataset_id_dataset_entity_id_get**](docs/DatasetManagementApi.md#get_dataset_item_datasets_dataset_entities_user_id_user_type_id_dataset_id_dataset_entity_id_get) | **GET** /datasets/datasetEntities/{user_id}/{user_type_id}/{dataset_id}/{dataset_entity_id} | Get Dataset Item
-*DatasetManagementApi* | [**get_entity_file_datasets_dataset_entities_files_user_id_user_type_id_dataset_id_file_id_get**](docs/DatasetManagementApi.md#get_entity_file_datasets_dataset_entities_files_user_id_user_type_id_dataset_id_file_id_get) | **GET** /datasets/datasetEntities/files/{user_id}/{user_type_id}/{dataset_id}/{file_id} | Get Entity File
-*DatasetManagementApi* | [**get_thumbnail_datasets_dataset_entities_thumbnail_user_id_user_type_id_dataset_id_file_id_get**](docs/DatasetManagementApi.md#get_thumbnail_datasets_dataset_entities_thumbnail_user_id_user_type_id_dataset_id_file_id_get) | **GET** /datasets/datasetEntities/thumbnail/{user_id}/{user_type_id}/{dataset_id}/{file_id} | Get Thumbnail
-*DatasetManagementApi* | [**get_user_datasets_datasets_user_id_user_type_id_get**](docs/DatasetManagementApi.md#get_user_datasets_datasets_user_id_user_type_id_get) | **GET** /datasets/{user_id}/{user_type_id} | Get User Datasets
-*DatasetManagementApi* | [**new_dataset_datasets_user_id_user_type_id_post**](docs/DatasetManagementApi.md#new_dataset_datasets_user_id_user_type_id_post) | **POST** /datasets/{user_id}/{user_type_id} | New Dataset
-*DatasetManagementApi* | [**new_dataset_entity_datasets_dataset_entities_user_id_user_type_id_post**](docs/DatasetManagementApi.md#new_dataset_entity_datasets_dataset_entities_user_id_user_type_id_post) | **POST** /datasets/datasetEntities/{user_id}/{user_type_id} | New Dataset Entity
-*DatasetManagementApi* | [**recover_dataset_entities_datasets_dataset_entities_recover_user_id_user_type_id_post**](docs/DatasetManagementApi.md#recover_dataset_entities_datasets_dataset_entities_recover_user_id_user_type_id_post) | **POST** /datasets/datasetEntities/recover/{user_id}/{user_type_id} | Recover Dataset Entities
-*DatasetManagementApi* | [**update_dataset_entity_datasets_dataset_entities_user_id_user_type_id_dataset_id_dataset_entity_id_put**](docs/DatasetManagementApi.md#update_dataset_entity_datasets_dataset_entities_user_id_user_type_id_dataset_id_dataset_entity_id_put) | **PUT** /datasets/datasetEntities/{user_id}/{user_type_id}/{dataset_id}/{dataset_entity_id} | Update Dataset Entity
 *SessionManagementApi* | [**delete_session_session_logout_user_id_user_type_id_delete**](docs/SessionManagementApi.md#delete_session_session_logout_user_id_user_type_id_delete) | **DELETE** /session/logout/{user_id}/{user_type_id} | Delete Session
-*SessionManagementApi* | [**new_session_session_login_post**](docs/SessionManagementApi.md#new_session_session_login_post) | **POST** /session/login | New Session
+*SessionManagementApi* | [**get_new_session**](docs/SessionManagementApi.md#get_new_session) | **POST** /session/login | New Session
 
 
 ## Documentation For Models
 
- - [DatasetDetails](docs/DatasetDetails.md)
- - [DeleteDatasetEntities](docs/DeleteDatasetEntities.md)
- - [EntityFileDetails](docs/EntityFileDetails.md)
- - [ForgotPassword](docs/ForgotPassword.md)
- - [HTTPValidationError](docs/HTTPValidationError.md)
- - [LocationDetails](docs/LocationDetails.md)
- - [NewDataset](docs/NewDataset.md)
- - [NewDatasetEntity](docs/NewDatasetEntity.md)
- - [NewLocation](docs/NewLocation.md)
- - [NewSession](docs/NewSession.md)
- - [NewStudent](docs/NewStudent.md)
- - [ResetPassword](docs/ResetPassword.md)
- - [StudentDetails](docs/StudentDetails.md)
- - [UpdateDatasetEntity](docs/UpdateDatasetEntity.md)
- - [UpdateLocation](docs/UpdateLocation.md)
- - [UpdateUser](docs/UpdateUser.md)
- - [UserDetails](docs/UserDetails.md)
+ - [DatasetDetails](docs/DatasetDetails.md)  
+ - [HTTPValidationError](docs/HTTPValidationError.md)    
+ - [NewSession](docs/NewSession.md)      
  - [ValidationError](docs/ValidationError.md)
  - [ValidationErrorLocInner](docs/ValidationErrorLocInner.md)
 

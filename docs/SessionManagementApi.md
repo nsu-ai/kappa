@@ -5,7 +5,7 @@ All URIs are relative to *http://localhost*
 Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**delete_session_session_logout_user_id_user_type_id_delete**](SessionManagementApi.md#delete_session_session_logout_user_id_user_type_id_delete) | **DELETE** /session/logout/{user_id}/{user_type_id} | Delete Session
-[**new_session_session_login_post**](SessionManagementApi.md#new_session_session_login_post) | **POST** /session/login | New Session
+[**get_new_session**](SessionManagementApi.md#get_new_session) | **POST** /session/login | New Session
 
 
 # **delete_session_session_logout_user_id_user_type_id_delete**
@@ -76,8 +76,8 @@ No authorization required
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **new_session_session_login_post**
-> UserDetails new_session_session_login_post(new_session)
+# **get_new_session**
+> UserDetails get_new_session(new_session)
 
 New Session
 
@@ -106,11 +106,11 @@ with kf_sdk.ApiClient(configuration) as api_client:
 
     try:
         # New Session
-        api_response = api_instance.new_session_session_login_post(new_session)
-        print("The response of SessionManagementApi->new_session_session_login_post:\n")
+        api_response = api_instance.get_new_session(new_session)
+        print("The response of SessionManagementApi->get_new_session:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling SessionManagementApi->new_session_session_login_post: %s\n" % e)
+        print("Exception when calling SessionManagementApi->get_new_session: %s\n" % e)
 ```
 
 
