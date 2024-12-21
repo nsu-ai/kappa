@@ -14,7 +14,7 @@ Name | Type | Description | Notes
 ## Example
 
 ```python
-from openapi_client.models.new_dataset import NewDataset
+from kf_sdk.models.new_dataset import NewDataset
 
 # TODO update the JSON string below
 json = "{}"

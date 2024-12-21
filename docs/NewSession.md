@@ -12,7 +12,7 @@ Name | Type | Description | Notes
 ## Example
 
 ```python
-from openapi_client.models.new_session import NewSession
+from kf_sdk.models.new_session import NewSession
 
 # TODO update the JSON string below
 json = "{}"

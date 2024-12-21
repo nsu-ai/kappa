@@ -11,7 +11,7 @@ Name | Type | Description | Notes
 ## Example
 
 ```python
-from openapi_client.models.delete_dataset_entities import DeleteDatasetEntities
+from kf_sdk.models.delete_dataset_entities import DeleteDatasetEntities
 
 # TODO update the JSON string below
 json = "{}"

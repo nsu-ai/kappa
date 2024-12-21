@@ -1,4 +1,4 @@
-# openapi_client.UsersManagementApi
+# kf_sdk.UsersManagementApi
 
 All URIs are relative to *http://localhost*
 
@@ -23,23 +23,23 @@ Forgot Password
 
 
 ```python
-import openapi_client
-from openapi_client.models.forgot_password import ForgotPassword
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.models.forgot_password import ForgotPassword
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.UsersManagementApi(api_client)
-    forgot_password = openapi_client.ForgotPassword() # ForgotPassword | 
+    api_instance = kf_sdk.UsersManagementApi(api_client)
+    forgot_password = kf_sdk.ForgotPassword() # ForgotPassword | 
 
     try:
         # Forgot Password
@@ -90,21 +90,21 @@ Get Profile Picture
 
 
 ```python
-import openapi_client
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.UsersManagementApi(api_client)
+    api_instance = kf_sdk.UsersManagementApi(api_client)
     user_id = 56 # int | 
     user_type_id = 56 # int | 
 
@@ -158,22 +158,22 @@ Get User Locations
 
 
 ```python
-import openapi_client
-from openapi_client.models.student_details import StudentDetails
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.models.student_details import StudentDetails
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.UsersManagementApi(api_client)
+    api_instance = kf_sdk.UsersManagementApi(api_client)
     user_id = 56 # int | 
     user_type_id = 56 # int | 
 
@@ -227,25 +227,25 @@ New Student
 
 
 ```python
-import openapi_client
-from openapi_client.models.new_student import NewStudent
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.models.new_student import NewStudent
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.UsersManagementApi(api_client)
+    api_instance = kf_sdk.UsersManagementApi(api_client)
     user_id = 56 # int | 
     user_type_id = 56 # int | 
-    new_student = openapi_client.NewStudent() # NewStudent | 
+    new_student = kf_sdk.NewStudent() # NewStudent | 
 
     try:
         # New Student
@@ -298,23 +298,23 @@ Reset Password
 
 
 ```python
-import openapi_client
-from openapi_client.models.reset_password import ResetPassword
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.models.reset_password import ResetPassword
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.UsersManagementApi(api_client)
-    reset_password = openapi_client.ResetPassword() # ResetPassword | 
+    api_instance = kf_sdk.UsersManagementApi(api_client)
+    reset_password = kf_sdk.ResetPassword() # ResetPassword | 
 
     try:
         # Reset Password
@@ -365,21 +365,21 @@ Update Profile Picture
 
 
 ```python
-import openapi_client
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.UsersManagementApi(api_client)
+    api_instance = kf_sdk.UsersManagementApi(api_client)
     user_id = 56 # int | 
     user_type_id = 56 # int | 
     pic = None # bytearray | 
@@ -435,25 +435,25 @@ Update User Profile
 
 
 ```python
-import openapi_client
-from openapi_client.models.update_user import UpdateUser
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.models.update_user import UpdateUser
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.UsersManagementApi(api_client)
+    api_instance = kf_sdk.UsersManagementApi(api_client)
     user_id = 56 # int | 
     user_type_id = 56 # int | 
-    update_user = openapi_client.UpdateUser() # UpdateUser | 
+    update_user = kf_sdk.UpdateUser() # UpdateUser | 
 
     try:
         # Update User Profile
@@ -506,21 +506,21 @@ Validate User Sign Up
 
 
 ```python
-import openapi_client
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.UsersManagementApi(api_client)
+    api_instance = kf_sdk.UsersManagementApi(api_client)
     user_id = 56 # int | 
     user_type_id = 56 # int | 
 

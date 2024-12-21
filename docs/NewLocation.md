@@ -14,7 +14,7 @@ Name | Type | Description | Notes
 ## Example
 
 ```python
-from openapi_client.models.new_location import NewLocation
+from kf_sdk.models.new_location import NewLocation
 
 # TODO update the JSON string below
 json = "{}"

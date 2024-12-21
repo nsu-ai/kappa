@@ -1,4 +1,4 @@
-# openapi_client.SessionManagementApi
+# kf_sdk.SessionManagementApi
 
 All URIs are relative to *http://localhost*
 
@@ -17,21 +17,21 @@ Delete Session
 
 
 ```python
-import openapi_client
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.SessionManagementApi(api_client)
+    api_instance = kf_sdk.SessionManagementApi(api_client)
     user_id = 56 # int | 
     user_type_id = 56 # int | 
 
@@ -85,24 +85,24 @@ New Session
 
 
 ```python
-import openapi_client
-from openapi_client.models.new_session import NewSession
-from openapi_client.models.user_details import UserDetails
-from openapi_client.rest import ApiException
+import kf_sdk
+from kf_sdk.models.new_session import NewSession
+from kf_sdk.models.user_details import UserDetails
+from kf_sdk.rest import ApiException
 from pprint import pprint
 
 # Defining the host is optional and defaults to http://localhost
 # See configuration.py for a list of all supported configuration parameters.
-configuration = openapi_client.Configuration(
+configuration = kf_sdk.Configuration(
     host = "http://localhost"
 )
 
 
 # Enter a context with an instance of the API client
-with openapi_client.ApiClient(configuration) as api_client:
+with kf_sdk.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = openapi_client.SessionManagementApi(api_client)
-    new_session = openapi_client.NewSession() # NewSession | 
+    api_instance = kf_sdk.SessionManagementApi(api_client)
+    new_session = kf_sdk.NewSession() # NewSession | 
 
     try:
         # New Session

@@ -10,7 +10,7 @@ Name | Type | Description | Notes
 ## Example
 
 ```python
-from openapi_client.models.forgot_password import ForgotPassword
+from kf_sdk.models.forgot_password import ForgotPassword
 
 # TODO update the JSON string below
 json = "{}"

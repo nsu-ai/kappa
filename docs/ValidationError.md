@@ -12,7 +12,7 @@ Name | Type | Description | Notes
 ## Example
 
 ```python
-from openapi_client.models.validation_error import ValidationError
+from kf_sdk.models.validation_error import ValidationError
 
 # TODO update the JSON string below
 json = "{}"
