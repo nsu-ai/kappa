@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "kf_sdk"
-version = "1.0.0"
-description = "FastAPI"
+version = "1.0.0a1"
+description = "Kappa Python SDK for Kappa-Framework v.1.0.0"
 authors = ["Kappa Group from A.I. center of NSU <ai@nsu.ru>"]
 license = "BSD-3.0 License"
 readme = "README.md"
@@ -16,8 +16,8 @@ classifiers = [
 
 [project]
 name = "kf_sdk"
-version = "1.0.0"
-description = "FastAPI"
+version = "1.0.0a1"
+description = "Kappa Python SDK for Kappa-Framework v.1.0.0"
 authors = [{name="Kappa Group from A.I. center of NSU",email="ai@nsu.ru"}]
 license = {file="LICENSE.md"}
 readme = "README.md"

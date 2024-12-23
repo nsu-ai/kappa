@@ -12,7 +12,7 @@ Kappa Framework Python SDK for Kappa v.1.0.0
 
 # Каппа - ϰ-фреймворк управления датасетами, версия 1.0.0
 Каппа - набор концептуального и программного обеспечения (фреймворк) для осуществления функций курации датасетов и моделей
-(Исследовательский центр в сфере искусственного интеллекта по направлению "Строительство и городская среда" НГУ, Новосибирск)
+([Исследовательский центр](https://nsu.ru/n/ai-center) в сфере искусственного интеллекта по направлению "Строительство и городская среда" НГУ, Новосибирск)
 
 ## Авторы
 
@@ -35,13 +35,15 @@ Kappa Framework Python SDK for Kappa v.1.0.0
 
 ## Функции:
 
-* Отслеживание авторства  разметки, в т.ч. использованием средств автоматизации разметки
-* Индексация всех датасетов в интернете (для сферы строительства и городской среды)
-* Индексация всех ИИ-задач, из научных публикаций и открытых кодов (для сферы строительства и городской среды)
+* [Реализовано] Отслеживание авторства разметки, в т.ч. использованием средств автоматизации разметки
+* [План на 2025] Индексация всех датасетов в интернете (для сферы строительства и городской среды)
+* [План на 2026] Индексация всех ИИ-задач, из научных публикаций и открытых кодов (для сферы строительства и городской среды)
 
-# Проекты на базе фреймворка
+## Проекты на базе фреймворка
 
-* 05-2024 - 11-2024: [База данных](https://ai.nsu.ru/product/) для проекта ["Школьники - научные волонтёры"](https://syncwoia.com/event/datavolunteers)
+* 05-2024 - 11-2024: [База данных](https://ai.nsu.ru/dv/) для проекта ["Школьники - научные волонтёры"](https://syncwoia.com/event/datavolunteers)
+* 12-2024 - н.в.: [Развёрнутая версия фреймворка с датасетами](https://bigdata.nsu.ru:8460/user-micro-services/v1/docs), здесь можно скачать
+[датасет библиографических карточек](#Датасеты) по теме строительства, который используется для тренировки алгоритмов распознавания текста на изображениях. 
 
 ## Финансовая поддержка
 
@@ -56,6 +58,14 @@ This work was supported by a grant for research centers, provided by the Analyti
 the Government of the Russian Federation in accordance with the subsidy agreement (agreement
 identifier 000000D730324P540002) and the agreement with the Novosibirsk State University dated
 December 27, 2023 No. 70-2023-001318.
+
+## Датасеты
+
+На базе фреймворка создано два датасета:
+* "Датасет по ретроконверсии библиотечных карточек (строительство)", подан 17.12.2024 на регистрацию в Роспатент, № заявки ЕА-139920
+* "Датасет по наблюдениям за флорой и фауной в городской среде", подан 17.12.2024 на регистрацию в Роспатент, № заявки ЕА-139931
+
+# kf_sdk installation
 
 ## Requirements
 
@@ -116,17 +126,6 @@ configuration_users = kf_sdk.Configuration(
     host = "https://bigdata.nsu.ru:8460/user-micro-services/v1"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure Bearer authorization: HTTPBearer
-#configuration = kappa_users.Configuration(
-#    access_token = os.environ["BEARER_TOKEN"]
-#)
-
-
 # Enter a context with an instance of the API client
 with kf_sdk.ApiClient(configuration_users) as api_client:
     # Create an instance of the API class
@@ -144,8 +143,14 @@ with kf_sdk.ApiClient(configuration_users) as api_client:
         print("The response of SessionManagementApi->get_new_session:\n")
         pprint(api_response)
     except ApiException as e:
-        print("Exception when calling ExpertManagementApi->get_new_session: %s\n" % e)
+        print("Exception when calling SessionManagementApi->get_new_session: %s\n" % e)
 
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization: HTTPBearer
 configuration_data = kf_sdk.Configuration(
     host = "https://bigdata.nsu.ru:8460/data-micro-services/v1",
     access_token = token

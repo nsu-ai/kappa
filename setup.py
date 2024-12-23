@@ -40,7 +40,7 @@ setup(
     include_package_data=True,
     long_description_content_type='text/markdown',
     long_description="""\
-    Kappa Framwork Python SDK for Kappa v.1.0.0
+    Kappa Python SDK for Kappa Framework v.1.0.0
     """,  # noqa: E501
     package_data={"kf_sdk": ["py.typed"]},
 )
