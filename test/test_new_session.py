@@ -8,7 +8,7 @@
 
 import unittest
 
-from openapi_client.models.new_session import NewSession
+from kf_sdk.models.new_session import NewSession
 
 class TestNewSession(unittest.TestCase):
     """NewSession unit test stubs"""
