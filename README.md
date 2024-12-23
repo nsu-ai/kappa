@@ -1,6 +1,9 @@
 # kf_sdk
 
+[![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/master/LICENSE.md)
+![Python 3.8, 3.10](https://img.shields.io/badge/python-3.8%20%7C%203.10-green.svg)
 [![PyPI Downloads](https://static.pepy.tech/badge/kf-sdk)](https://pepy.tech/projects/kf-sdk)
+![Releases](https://img.shields.io/github/release/nsu-ai/kappa.svg)
 
 Kappa Framework Python SDK for Kappa v.1.0.0
 
