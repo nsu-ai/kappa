@@ -24,7 +24,6 @@ class TestNewSession(unittest.TestCase):
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        model = NewSession()
         if include_optional:
             return NewSession(
                 login_id = 'anonymous',
