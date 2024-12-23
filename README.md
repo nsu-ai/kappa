@@ -10,19 +10,18 @@ Kappa Framework Python SDK for Kappa v.1.0.0
 - API version: 0.1.0
 - Package version: 1.0.0
 
-# Kappa - ϰ-framework for curating datasets and models
-КАППА - Фреймворк курации датасетов и моделей
+# Каппа - ϰ-фреймворк управления датасетами, версия 1.0.0
+Каппа - набор концептуального и программного обеспечения (фреймворк) для осуществления функций курации датасетов и моделей
 (Исследовательский центр в сфере искусственного интеллекта по направлению "Строительство и городская среда" НГУ, Новосибирск)
 
+## Авторы
 
-## Authors
-
-Kumar R.,
-Pavlovskiy E.N.,
-Ivankov P.,
-Denisov S.,
-Mishchenko A.,
-Bolotov K.
+Кумар Р.,
+Павловский Е.Н.,
+Иванков П.С.,
+Денисов С.С.,
+Мищенко А.С.,
+Болотов К.Ю.
 
 ## Назначение:
 
@@ -58,14 +57,17 @@ the Government of the Russian Federation in accordance with the subsidy agreemen
 identifier 000000D730324P540002) and the agreement with the Novosibirsk State University dated
 December 27, 2023 No. 70-2023-001318.
 
-## Requirements.
+## Requirements
 
 Python 3.8+
 
+Libraries:
+```
 urllib3 >= 1.25.3, < 3.0.0
 python_dateutil >= 2.8.2
 pydantic >= 2
 typing-extensions >= 4.7.1
+```
 
 ## Installation & Usage
 ### pip install
