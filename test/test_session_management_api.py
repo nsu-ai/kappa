@@ -21,8 +21,8 @@ class TestSessionManagementApi(unittest.TestCase):
         self.configuration_users = Configuration(
             host = "https://bigdata.nsu.ru:8460/user-micro-services/v1"
         )
-        self.api_client = ApiClient(configuration_users)
-        self.api = SessionManagementApi(api_client)
+        self.api_client = ApiClient(self.configuration_users)
+        self.api = SessionManagementApi(self.api_client)
         self.login_id = "anonymous"
         self.passwd = "anonymous"
         self.new_session = NewSession(login_id=self.login_id,passwd=self.passwd)
