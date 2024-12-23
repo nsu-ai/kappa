@@ -11,7 +11,7 @@ import unittest
 from kf_sdk.api.session_management_api import SessionManagementApi
 from kf_sdk.configuration import Configuration
 from kf_sdk.api_client import ApiClient
-from kf_sdf.models.new_session import NewSession
+from kf_sdk.models.new_session import NewSession
 
 
 class TestSessionManagementApi(unittest.TestCase):
