@@ -1,0 +1,41 @@
+[package]
+name = "kappa-apk"
+version = "2.0.0-beta"
+edition = "2024"
+description = "Python client SDK for the Kappa-framework ML/AI platform"
+license = "BSD-3-Clause"
+readme = "README.md"
+authors = ["Kappa-Apk @nsu.ru"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "kappa_apk"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.25.0"
+reqwest = { version = "0.11", default-features = false, features = ["json", "stream", "rustls-tls", "multipart"] }
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+urlencoding = "2.1"
+zip = "0.6"
+tokio-util = { version = "0.7", features = ["io"] }
+futures-util = "0.3"
+dirs = "5.0"
+rand = "0.8"
+sha1 = "0.10.6"
+walkdir = "2"
+
+[lints.clippy]
+uninlined_format_args = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+module_inception = "allow"
+useless_conversion = "allow"
+needless_borrow = "allow"
+let_and_return = "allow"
+map_clone = "allow"
+manual_unwrap_or_default = "allow"
+unwrap_or_default = "allow"
+new_without_default = "allow"

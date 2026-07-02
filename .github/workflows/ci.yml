@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, dev, "v*"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (test + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+  maturin:
+    name: Wheel (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --interpreter python${{ matrix.python-version }} -o dist
+
+      - name: Smoke import
+        run: |
+          pip install dist/kappa_apk-*.whl
+          python -c "import kappa_apk; print(kappa_apk.version())"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-py${{ matrix.python-version }}-linux
+          path: dist/*.whl
+          if-no-files-found: error

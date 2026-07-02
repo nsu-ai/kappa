@@ -1,222 +1,187 @@
-# kf_sdk
+# kappa-apk
 
-[![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/master/LICENSE.md)
-![Python 3.8, 3.10](https://img.shields.io/badge/python-3.8%20%7C%203.10-green.svg)
-[![PyPI Downloads](https://static.pepy.tech/badge/kf-sdk)](https://pepy.tech/projects/kf-sdk)
+[![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/main/LICENSE.md)
+![Python 3.9–3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-green.svg)
+[![PyPI Downloads](https://static.pepy.tech/badge/kappa-apk)](https://pepy.tech/projects/kappa-apk)
 ![Releases](https://img.shields.io/github/release/nsu-ai/kappa.svg)
 
-Kappa Framework Python SDK for Kappa v.1.0.0
+Python client SDK for **Kappa-framework** — a self-hosted microservices platform for ML/AI research workflows.
 
-- API version: 0.1.0
-- Package version: 1.0.0
+Built with Rust + [PyO3](https://pyo3.rs), distributed as the `kappa_apk` Python package.
 
-# Каппа - ϰ-фреймворк управления датасетами, версия 2.0.0
-Каппа - набор концептуального и программного обеспечения (фреймворк) для осуществления функций курации датасетов и моделей
-([Исследовательский центр](https://nsu.ru/n/ai-center) в сфере искусственного интеллекта по направлению "Строительство и городская среда" НГУ, Новосибирск)
+**Full SDK documentation:** [`docs/README.md`](docs/README.md) (EN) · [`docs/ru/README.md`](docs/ru/README.md) (RU) | **Русская версия:** [`README.md`](README.md)
 
-## Авторы
+| | |
+|---|---|
+| **Version** | 3.0.0-beta |
+| **Python** | 3.9+ |
+| **Rust edition** | 2024 |
+| **License** | BSD-3-Clause ([LICENSE.md](LICENSE.md)) |
 
-Кумар Р., Павловский Е.Н., Иванков П.С., Денисов С.С., Мищенко А.С., Болотов К.Ю., Безруков Я.С., Глушенко А.В., Дербаль Р., Бобо С.
+---
 
+# Kappa — ϰ-framework for dataset and model management, version 3.0.0-beta
 
-## Назначение:
+Kappa is a conceptual and software framework for dataset curation and model lifecycle management, developed at the [AI Research Center](https://nsu.ru/n/ai-center) for Construction and Urban Environment, Novosibirsk State University.
 
-* Распределение ответственности при формировании набора данных;
-* Контроль за обучением моделей машинного обучения с обратной связью на датасет;
-* Испытание цифровых двойников на базе моделей искусственного интеллекта;
-* Отслеживание соблюдения этических норм и стандартов
+## Authors
 
+Kumar R., Pavlovsky E.N., Ivankov P.S., Denisov S.S., Mishchenko A.S., Bolotov K.Yu., Bezrukov Ya.S., Glushchenko A.V., Derbal R., Bobo S.
 
-![](kappa-rus.png)
+## Purpose
 
-## Функции:
+* Distribute responsibility when building datasets;
+* Monitor ML model training with feedback loops on the dataset;
+* Test digital twins powered by AI models;
+* Track compliance with ethical norms and standards.
 
-* [Реализовано в 2024, версия 1.0.0] Отслеживание авторства разметки, в т.ч. использованием средств автоматизации разметки
-* [Реализовано в 2025, версия 2.0.0] Бенчмаркинг ИИ-моделей
-* [План на 2026] Индексация всех датасетов в интернете (для сферы строительства и городской среды), индексация всех ИИ-задач, из научных публикаций и открытых кодов (для сферы строительства и городской среды)
+![](kappa-eng.png)
 
-## Проекты на базе фреймворка
+## Features
 
-* 05-2024 - 11-2024: [База данных](https://ai.nsu.ru/dv/) для проекта ["Школьники - научные волонтёры"](https://syncwoia.com/event/datavolunteers)
-* 12-2024 - н.в.: [Развёрнутая версия фреймворка с датасетами](https://kappa.nsu.ru:8060/user-micro-services/v1/docs), здесь можно скачать
-[датасет библиографических карточек](#Датасеты) по теме строительства, который используется для тренировки алгоритмов распознавания текста на изображениях.
+* [Implemented 2024, v1.0.0] Annotation authorship tracking, including automated labeling tools
+* [Implemented 2025, v2.0.0] AI model benchmarking
+* [Planned 2026] Index datasets and AI tasks from scientific publications and open-source code (construction and urban environment domain)
 
-## Финансовая поддержка
+## Projects built on the framework
 
-2024: Исследование выполнено за счет финансовой поддержки (гранта) исследовательских центров,
-предоставленной Автономной некоммерческой организацией «Аналитический центр при Правительстве
-Российской Федерации», идентификатор соглашения о предоставлении субсидии 000000D730324P540002,
-договор о предоставлении гранта с Новосибирским государственным университетом от 27.12.2023 № 70-2023-001318,
-мероприятие № 23 «Выполнение работ в 2024 г. по ТЗ (проект Научные исследования в области ИИ (Фреймворк «КАППА»))»,
-тематика Программы № 1 «Научные исследования в области ИИ для строительства и городской среды».
+* 05-2024 – 11-2024: [Database](https://ai.nsu.ru/dv/) for the ["Schoolchildren — scientific volunteers"](https://syncwoia.com/event/datavolunteers) project
+* 12-2024 – present: [Deployed framework with datasets](https://kappa.nsu.ru:8060/user-micro-services/v2/docs) — download the [bibliographic card dataset](#datasets) used for OCR training in the construction domain
 
-2024: This work was supported by a grant for research centers, provided by the Analytical Center for
-the Government of the Russian Federation in accordance with the subsidy agreement (agreement
-identifier 000000D730324P540002) and the agreement with the Novosibirsk State University dated
-December 27, 2023 No. 70-2023-001318.
+## Funding
 
-2025: Исследование выполнено в рамках
-выполнения гранта (Соглашение о предоставлении из федерального бюджета гранта в форме субсидии от
-17.04.2025 № 139-15-2025-006 ИГК 000000Ц313925P3S0002):
-- относится к направлению развития искусственного интеллекта: «Строительство и городская среда»;
-- относится к мероприятию Плана деятельности Исследовательского центра в сфере искусственного
-интеллекта Новосибирского государственного университета № 56 «Выполнение работ в 2025 г. по ТЗ
-(проект Научные исследования в области ИИ (Фреймворк «КАППА»))»;
-- относится к тематике Программы Исследовательского центра в сфере искусственного интеллекта
-Новосибирского государственного университета: «Тематика 1. Научные исследования в области ИИ для
-Строительства и городской среды».
+**2024:** This work was supported by a grant for research centers, provided by the Analytical Center for the Government of the Russian Federation in accordance with the subsidy agreement (agreement identifier 000000D730324P540002) and the agreement with the Novosibirsk State University dated December 27, 2023 No. 70-2023-001318.
 
-2026: Исследование выполнено в рамках выполнения гранта (Соглашение о предоставлении из федерального бюджета
-гранта в форме субсидии от 17.04.2025 № 139-15-2025-006 ИГК 000000Ц313925P3S0002):
-- относится к направлению развития искусственного интеллекта: «Строительство и городская среда»;
-- относится к мероприятию Плана деятельности Исследовательского центра в сфере искусственного
-интеллекта Новосибирского государственного университета № 85 «Выполнение работ в 2026 г. по ТЗ
-(проект Научные исследования в области ИИ (Фреймворк «КАППА»))»;
-- относится к тематике Программы Исследовательского центра в сфере искусственного интеллекта
-Новосибирского государственного университета: «Тематика 1. Научные исследования в области ИИ для
-Строительства и городской среды».
+**2025:** Research carried out under federal budget grant agreement No. 139-15-2025-006 (IGK 000000Ц313925P3S0002), AI direction "Construction and Urban Environment", NSU AI Research Center activity plan item No. 56.
 
+**2026:** Research carried out under federal budget grant agreement No. 139-15-2025-006 (IGK 000000Ц313925P3S0002), AI direction "Construction and Urban Environment", NSU AI Research Center activity plan item No. 85.
 
-## Датасеты
+## Datasets
 
-На базе фреймворка зарегистрировано три датасета:
-* "Датасет по ретроконверсии библиотечных карточек (строительство)", свидетельство о регистрации базы данных №2025620303 от 17 января 2025 г.
-* "Датасет по наблюдениям за флорой и фауной в городской среде",свидетельство о регистрации базы данных № 2025620139 от 10 января 2025 г.
-* "Датасет по извлечению аннотаций из библиотечных ресурсов", свидетельство о регистрации базы данных №2026620302 от 21 января 2026 г.
- 
-# kf_sdk installation
+Three datasets are registered on the framework:
+
+* "Dataset for retroconversion of library cards (construction)" — database registration certificate No. 2025620303, January 17, 2025
+* "Dataset for flora and fauna observations in urban environments" — database registration certificate No. 2025620139, January 10, 2025
+* "Dataset for extracting annotations from library resources" — database registration certificate No. 2026620302, January 21, 2026
+
+---
+
+# kappa-apk installation
 
 ## Requirements
 
-Python 3.8+
+- Python 3.9+
+- For building from source: Rust toolchain + `maturin >= 1.9`
 
-Libraries:
-```
-urllib3 >= 1.25.3, < 3.0.0
-python_dateutil >= 2.8.2
-pydantic >= 2
-typing-extensions >= 4.7.1
-```
+## Installation
 
-## Installation & Usage
-### pip install
+### From PyPI (recommended)
 
-If the python package is hosted on PyPI, you can install directly using:
-
-```sh
-pip install kf_sdk
+```bash
+pip install kappa-apk
 ```
 
-Then import the package:
+Pre-built wheels are published for **Linux (manylinux)**, **macOS** (Intel + Apple Silicon), and **Windows**, for Python **3.9–3.13**.
+
 ```python
-import kf_sdk
+import kappa_apk
+print(kappa_apk.version())
 ```
 
-### Setuptools
+### From source (requires Rust)
 
-Install via [Setuptools](http://pypi.python.org/pypi/setuptools).
-
-```sh
+```bash
+pip install maturin
 git clone https://github.com/nsu-ai/kappa.git
 cd kappa
-python setup.py install --user
+maturin develop --release
 ```
-(or `sudo python setup.py install` to install the package for all users)
 
-Then import the package:
-```python
-import kf_sdk
+### Local wheel build
+
+```bash
+# Local build only → dist/ (no upload)
+./build_wheel.sh
+./build_wheel.sh --local --no-sdist -v 3.11
+
+# Build + install + smoke test
+./build_wheel.sh -i
+
+# Build + upload to PyPI
+./build_wheel.sh --upload
 ```
+
+### Build requirements
+
+- Rust toolchain (`curl https://sh.rustup.rs | sh`)
+- `maturin >= 1.9` (`pip install maturin`)
+- Python 3.9–3.13
+- Optional: `cibuildwheel` for cross-platform wheels (see [`docs/BuildAndPublish.md`](docs/BuildAndPublish.md))
+
+---
 
 ## Getting Started
 
-Please follow the [installation procedure](#installation--usage) and then run the following:
+All requests go through the **Traefik API gateway** — set `base_url` to the gateway host. Identity (user, org) is derived from the JWT token server-side; no user IDs in URLs.
 
 ```python
+from kappa_apk import KappaApkClient
 
-import kf_sdk
-from kf_sdk.rest import ApiException
-from kf_sdk.models import NewSession
-from pprint import pprint
+base_url = "https://kappa.nsu.ru:8061"
 
-# Defining the host is optional and defaults to http://localhost/user-micro-services/v1
-# See configuration.py for a list of all supported configuration parameters.
-configuration_users = kf_sdk.Configuration(
-    host = "https://kappa.nsu.ru:8060/user-micro-services/v1"
-)
+# Connect via context manager (auto login/logout)
+with KappaApkClient(base_url, "user@example.com", "secret") as client:
 
-# Enter a context with an instance of the API client
-with kf_sdk.ApiClient(configuration_users) as api_client:
-    # Create an instance of the API class
-    api_instance = kf_sdk.SessionManagementApi(api_client)
-    login_id = "anonymous"
-    passwd = "anonymous"
-    new_session = NewSession(login_id=login_id,passwd=passwd)
+    # List datasets
+    page = client.list_datasets(size=50)
+    print(page["items"])
 
-    try:
-        # New Session
-        api_response = api_instance.get_new_session(new_session)
-        token = api_response.token
-        user_id = api_response.user_id
-        user_type_id = api_response.user_type_id
-        print("The response of SessionManagementApi->get_new_session:\n")
-        pprint(api_response)
-    except ApiException as e:
-        print("Exception when calling SessionManagementApi->get_new_session: %s\n" % e)
+    # Download a dataset version archive (cached on disk)
+    info = client.download_dataset_version_archive(
+        dataset_id=582,
+        version_no="1.0.0",
+    )
+    print(info.data_path)   # ~/cache/kappa-framework/datasets/...
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure Bearer authorization: HTTPBearer
-configuration_data = kf_sdk.Configuration(
-    host = "https://kappa.nsu.ru:8060/data-micro-services/v1",
-    access_token = token
-)
-
-
-with kf_sdk.ApiClient(configuration_data) as api_client:
-    # Create an instance of the API class
-    api_instance = kf_sdk.DatasetManagementApi(api_client)
-    dataset_id = 582
-    dataset_version_no = '1.0.0'
-
-    try:
-        # Get Zip file of the Dataset  under Version
-        api_response = api_instance.get_dataset_version_archive_datasets_versions_archive_user_id_user_type_id_dataset_id_dataset_version_no_get_without_preload_content(user_id, user_type_id, dataset_id, dataset_version_no)
-        pprint(api_response)
-        with open("tmp.zip","wb") as f:
-            f.write(api_response.data)
-    except Exception as e:
-        print("Exception when calling DatasetManagementApi->get_dataset_version_datasets_versions_user_id_user_type_id_dataset_id_dataset_version_no_get_without_preload_content: %s\n" % e)
-
+    # Or load directly into a data loader for training
+    loader = client.get_dataset_loader(
+        dataset_name="MyDataset",
+        version_no="1.0.0",
+        batch_size=32,
+        shuffle=True,
+    )
+    for batch in loader:
+        print(batch[0]["entity_id"])
 ```
 
-## Documentation for API Endpoints
+### Core concepts
 
-All URIs are relative to *http://localhost*
+| Concept | Description |
+|---|---|
+| `KappaApkClient` | Main HTTP client — auth, datasets, benchmarks |
+| `KappaDataset` | In-memory dataset (`__len__` / `__getitem__`) |
+| `KappaDataLoader` | Epoch-aware Rust batch loader |
+| `vision` / `text` / `audio` | Transform submodules for preprocessing |
 
-Class | Method | HTTP request | Description
------------- | ------------- | ------------- | -------------
-*DatasetManagementApi* | [**get_dataset_version_archive_datasets_versions_archive_user_id_user_type_id_dataset_id_dataset_version_no_get**](docs/DatasetManagementApi.md#get_dataset_version_archive_datasets_versions_archive_user_id_user_type_id_dataset_id_dataset_version_no_get) | **GET** /datasets/datasetEntities/{user_id}/{user_type_id} | Get Dataset Version
-*SessionManagementApi* | [**delete_session_session_logout_user_id_user_type_id_delete**](docs/SessionManagementApi.md#delete_session_session_logout_user_id_user_type_id_delete) | **DELETE** /session/logout/{user_id}/{user_type_id} | Delete Session
-*SessionManagementApi* | [**get_new_session**](docs/SessionManagementApi.md#get_new_session) | **POST** /session/login | New Session
+---
 
+## Documentation
 
-## Documentation For Models
+**English** · **Русский:** [`README.md`](README.md) · [`docs/ru/`](docs/ru/)
 
- - [DatasetDetails](docs/DatasetDetails.md)  
- - [HTTPValidationError](docs/HTTPValidationError.md)    
- - [NewSession](docs/NewSession.md)      
- - [ValidationError](docs/ValidationError.md)
- - [ValidationErrorLocInner](docs/ValidationErrorLocInner.md)
+| Guide (EN) | Guide (RU) | Description |
+|---|---|---|
+| [`docs/GettingStarted.md`](docs/GettingStarted.md) | [`docs/ru/GettingStarted.md`](docs/ru/GettingStarted.md) | Install, gateway, authentication |
+| [`docs/KappaApkClient.md`](docs/KappaApkClient.md) | [`docs/ru/KappaApkClient.md`](docs/ru/KappaApkClient.md) | Client API reference |
+| [`docs/Datasets.md`](docs/Datasets.md) | [`docs/ru/Datasets.md`](docs/ru/Datasets.md) | Dataset CRUD, entities, versions |
+| [`docs/LoadersAndTransforms.md`](docs/LoadersAndTransforms.md) | [`docs/ru/LoadersAndTransforms.md`](docs/ru/LoadersAndTransforms.md) | Data loaders and transforms |
+| [`docs/Benchmarks.md`](docs/Benchmarks.md) | [`docs/ru/Benchmarks.md`](docs/ru/Benchmarks.md) | Benchmark workflow |
+| [`docs/DataModels.md`](docs/DataModels.md) | [`docs/ru/DataModels.md`](docs/ru/DataModels.md) | Request/response models |
+| [`docs/BuildAndPublish.md`](docs/BuildAndPublish.md) | [`docs/ru/BuildAndPublish.md`](docs/ru/BuildAndPublish.md) | Wheels, CI, PyPI publishing |
+| [`code_examples/`](code_examples/) | — | Runnable usage examples |
 
+---
 
-<a id="documentation-for-authorization"></a>
-## Documentation For Authorization
+## License
 
-Endpoints do not require authorization.
-
-
-
+See [LICENSE.md](LICENSE.md) — BSD 3-Clause License, Copyright (c) 2024, Novosibirsk State University, Ai-Center.
