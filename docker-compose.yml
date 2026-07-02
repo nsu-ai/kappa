@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  kappaapk:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kappaapk:latest
+    container_name: kappaapk-app
+    volumes:
+      # Mount source code for development (optional)
+      - ./src:/app/src:ro
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    # Override the default command for interactive development
+    # command: ["python3", "-i", "-c", "import KappaApk; print('Ready for development')"]
+    
+  # Development service with hot reloading (optional)
+  kappaapk-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kappaapk:dev
+    container_name: kappaapk-dev
+    volumes:
+      - .:/app
+      - /app/target  # Exclude target directory from volume mount
+    working_dir: /app
+    command: ["bash", "-c", "pip3 install maturin && maturin develop --release"]
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    profiles:
+      - dev 
