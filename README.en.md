@@ -1,26 +1,26 @@
-# kf-sdk
+# kappa-apk
 
 [![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/main/LICENSE.md)
 ![Python 3.9–3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-green.svg)
-[![PyPI Downloads](https://pypi.org/project/kf-sdk/)](https://pypi.org/project/kf-sdk/)
+[![PyPI Downloads](https://static.pepy.tech/badge/kappa-apk)](https://pepy.tech/projects/kappa-apk)
 ![Releases](https://img.shields.io/github/release/nsu-ai/kappa.svg)
 
 Python client SDK for **Kappa-framework** — a self-hosted microservices platform for ML/AI research workflows.
 
-Built with Rust + [PyO3](https://pyo3.rs), distributed as the `kf-sdk` Python package (`import kappa_apk`).
+Built with Rust + [PyO3](https://pyo3.rs), distributed as the `kappa_apk` Python package.
 
 **Full SDK documentation:** [`docs/README.md`](docs/README.md) (EN) · [`docs/ru/README.md`](docs/ru/README.md) (RU) | **Русская версия:** [`README.md`](README.md)
 
 | | |
 |---|---|
-| **Version** | 3.0.0 |
+| **Version** | 3.0.0-beta |
 | **Python** | 3.9+ |
 | **Rust edition** | 2024 |
 | **License** | BSD-3-Clause ([LICENSE.md](LICENSE.md)) |
 
 ---
 
-# Kappa — ϰ-framework for dataset and model management, version 3.0.0
+# Kappa — ϰ-framework for dataset and model management, version 3.0.0-beta
 
 Kappa is a conceptual and software framework for dataset curation and model lifecycle management, developed at the [AI Research Center](https://nsu.ru/n/ai-center) for Construction and Urban Environment, Novosibirsk State University.
 
@@ -41,7 +41,7 @@ Kumar R., Pavlovsky E.N., Ivankov P.S., Denisov S.S., Mishchenko A.S., Bolotov K
 
 * [Implemented 2024, v1.0.0] Annotation authorship tracking, including automated labeling tools
 * [Implemented 2025, v2.0.0] AI model benchmarking
-* [Implemented 2026, v3.0.0] Index all datasets on the internet (construction and urban environment domain), index all AI tasks from scientific publications and open-source code (construction and urban environment domain)
+* [Planned 2026] Index datasets and AI tasks from scientific publications and open-source code (construction and urban environment domain)
 
 ## Projects built on the framework
 
@@ -66,7 +66,7 @@ Three datasets are registered on the framework:
 
 ---
 
-# kf-sdk installation
+# kappa-apk installation
 
 ## Requirements
 
@@ -78,7 +78,7 @@ Three datasets are registered on the framework:
 ### From PyPI (recommended)
 
 ```bash
-pip install kf-sdk
+pip install kappa-apk
 ```
 
 Pre-built wheels are published for **Linux (manylinux)**, **macOS** (Intel + Apple Silicon), and **Windows**, for Python **3.9–3.13**.

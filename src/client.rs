@@ -139,12 +139,12 @@ impl ApiClient for KappaApkClient {
             } else {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
-                    && let Some(detail) = json.get("detail").and_then(|v| v.as_str())
-                {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        detail.to_string(),
-                    ));
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(detail) = json.get("detail").and_then(|v| v.as_str()) {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            detail.to_string(),
+                        ));
+                    }
                 }
                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     if text.is_empty() {
@@ -261,12 +261,12 @@ impl ApiClient for KappaApkClient {
             } else {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
-                    && let Some(detail) = json.get("detail").and_then(|v| v.as_str())
-                {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        detail.to_string(),
-                    ));
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(detail) = json.get("detail").and_then(|v| v.as_str()) {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            detail.to_string(),
+                        ));
+                    }
                 }
                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     if text.is_empty() {

@@ -52,10 +52,10 @@ fn ensure_pil_image<'py>(py: Python<'py>, value: &Bound<'py, PyAny>) -> PyResult
 
     if value.is_instance_of::<PyDict>() {
         let sample = value.downcast::<PyDict>()?;
-        if let Some(existing) = sample.get_item("image")?
-            && existing.hasattr("resize")? && existing.hasattr("crop")?
-        {
-            return Ok(existing.unbind().into());
+        if let Some(existing) = sample.get_item("image")? {
+            if existing.hasattr("resize")? && existing.hasattr("crop")? {
+                return Ok(existing.unbind().into());
+            }
         }
 
         let file_path = extract_first_file_path_from_sample(sample)?;

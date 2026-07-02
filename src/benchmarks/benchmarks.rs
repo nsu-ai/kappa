@@ -273,14 +273,14 @@ impl Benchmarks {
                             )
                         })?;
                     } else {
-                        if let Some(parent) = outpath.parent()
-                            && !parent.exists()
-                        {
-                            fs::create_dir_all(parent).map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    format!("Failed to create parent directory: {}", e),
-                                )
-                            })?;
+                        if let Some(parent) = outpath.parent() {
+                            if !parent.exists() {
+                                fs::create_dir_all(parent).map_err(|e| {
+                                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                        format!("Failed to create parent directory: {}", e),
+                                    )
+                                })?;
+                            }
                         }
                         let mut outfile = fs::File::create(&outpath).map_err(|e| {
                             PyErr::new::<pyo3::exceptions::PyValueError, _>(

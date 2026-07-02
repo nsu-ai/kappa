@@ -1,26 +1,26 @@
-# kf-sdk
+# kappa-apk
 
 [![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/main/LICENSE.md)
 ![Python 3.9–3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-green.svg)
-[![PyPI Downloads](https://pypi.org/project/kf-sdk/)](https://pypi.org/project/kf-sdk/)
+[![PyPI Downloads](https://static.pepy.tech/badge/kappa-apk)](https://pepy.tech/projects/kappa-apk)
 ![Releases](https://img.shields.io/github/release/nsu-ai/kappa.svg)
 
 Python-клиент SDK для **Kappa-framework** — самостоятельно развёртываемой микросервисной платформы для исследовательских ML/AI рабочих процессов.
 
-Реализован на Rust + [PyO3](https://pyo3.rs), распространяется как Python-пакет `kf-sdk` (`import kappa_apk`).
+Реализован на Rust + [PyO3](https://pyo3.rs), распространяется как Python-пакет `kappa_apk`.
 
 **Документация SDK:** [`docs/ru/README.md`](docs/ru/README.md) (RU) · [`docs/README.md`](docs/README.md) (EN) | **English version:** [`README.en.md`](README.en.md)
 
 | | |
 |---|---|
-| **Версия** | 3.0.0 |
+| **Версия** | 3.0.0-beta |
 | **Python** | 3.9+ |
 | **Rust edition** | 2024 |
 | **Лицензия** | BSD-3-Clause ([LICENSE.md](LICENSE.md)) |
 
 ---
 
-# Каппа — ϰ-фреймворк управления датасетами и моделями, версия 3.0.0
+# Каппа — ϰ-фреймворк управления датасетами и моделями, версия 3.0.0-beta
 
 Каппа — набор концептуального и программного обеспечения (фреймворк) для осуществления функций курации датасетов и моделей ([Исследовательский центр](https://nsu.ru/n/ai-center) в сфере искусственного интеллекта по направлению «Строительство и городская среда» НГУ, Новосибирск).
 
@@ -41,7 +41,7 @@ Python-клиент SDK для **Kappa-framework** — самостоятель�
 
 * [Реализовано в 2024, версия 1.0.0] Отслеживание авторства разметки, в т.ч. с использованием средств автоматизации разметки
 * [Реализовано в 2025, версия 2.0.0] Бенчмаркинг ИИ-моделей
-* [Реализовано в 2026, версия 3.0.0] Индексация всех датасетов в интернете (для сферы строительства и городской среды), индексация всех ИИ-задач, из научных публикаций и открытых кодов (для сферы строительства и городской среды)
+* [План на 2026] Индексация всех датасетов в интернете (для сферы строительства и городской среды), индексация всех ИИ-задач из научных публикаций и открытых кодов (для сферы строительства и городской среды)
 
 ## Проекты на базе фреймворка
 
@@ -66,7 +66,7 @@ Python-клиент SDK для **Kappa-framework** — самостоятель�
 
 ---
 
-# Установка kf-sdk
+# Установка kappa-apk
 
 ## Требования
 
@@ -78,7 +78,7 @@ Python-клиент SDK для **Kappa-framework** — самостоятель�
 ### Из PyPI (рекомендуется)
 
 ```bash
-pip install kf-sdk
+pip install kappa-apk
 ```
 
 Сборки wheels публикуются для **Linux (manylinux)**, **macOS** (Intel + Apple Silicon) и **Windows**, Python **3.9–3.13**.

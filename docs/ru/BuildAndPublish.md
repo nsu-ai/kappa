@@ -2,9 +2,9 @@
 
 **English:** [../BuildAndPublish.md](../BuildAndPublish.md)
 
-**PyPI-проект:** [`kf-sdk`](https://pypi.org/project/kf-sdk/) — wheels именуются `kf_sdk-*.whl`; импорт: `kappa_apk`.
-
 ---
+
+## Локальная сборка (`build_wheel.sh`)
 
 | Режим | Команда |
 |---|---|
@@ -64,7 +64,7 @@ twine upload dist/*
 | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | push / PR | `cargo test`, clippy, maturin wheels (py3.9–3.13), sdist |
 | [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml) | Release / вручную | sdist + cibuildwheel на Linux/macOS/Windows → PyPI |
 
-**Trusted publishing PyPI:** настройте окружение `pypi` на GitHub, создайте тег Release (например, `v3.0.0`).
+**Trusted publishing PyPI:** настройте окружение `pypi` на GitHub, создайте тег Release (например, `v2.0.0-beta`).
 
 ---
 
