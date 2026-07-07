@@ -41,7 +41,7 @@ Kumar R., Pavlovsky E.N., Ivankov P.S., Denisov S.S., Mishchenko A.S., Bolotov K
 
 * [Implemented 2024, v1.0.0] Annotation authorship tracking, including automated labeling tools
 * [Implemented 2025, v2.0.0] AI model benchmarking
-* [Planned 2026] Index datasets and AI tasks from scientific publications and open-source code (construction and urban environment domain)
+* [Implemented 2026, v3.0.0] Index all datasets on the internet (construction and urban environment domain), index all AI tasks from scientific publications and open-source code (construction and urban environment domain)
 
 ## Projects built on the framework
 
