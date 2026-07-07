@@ -1,0 +1,5 @@
+# MNIST Kappa training example + local dev (install into code_examples/.venv)
+torch>=2.0
+torchvision>=0.15
+matplotlib>=3.7
+maturin>=1.9,<2.0

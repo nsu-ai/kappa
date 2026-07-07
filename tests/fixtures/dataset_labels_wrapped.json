@@ -1,0 +1,6 @@
+{
+  "data": [
+    {"labelId": 1, "datasetId": 7, "label": "T-shirt/top"},
+    {"labelId": 2, "datasetId": 7, "label": "Trouser"}
+  ]
+}
