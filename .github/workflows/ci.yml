@@ -50,7 +50,7 @@ jobs:
 
       - name: Smoke import
         run: |
-          pip install dist/kappa_apk-*.whl
+          pip install dist/kf_sdk-*.whl
           python -c "import kappa_apk; print(kappa_apk.version())"
 
       - uses: actions/upload-artifact@v4
