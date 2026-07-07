@@ -38,10 +38,10 @@ fn extract_labels_json_array(value: &serde_json::Value) -> serde_json::Value {
                 }
                 if let Some(nested) = inner.as_object() {
                     for nested_key in ["data", "labels", "items"] {
-                        if let Some(arr) = nested.get(nested_key) {
-                            if arr.is_array() {
-                                return arr.clone();
-                            }
+                        if let Some(arr) = nested.get(nested_key)
+                            && arr.is_array()
+                        {
+                            return arr.clone();
                         }
                     }
                 }
@@ -567,14 +567,14 @@ impl Datasets {
                         )
                     })?;
                 } else {
-                    if let Some(parent) = outpath.parent() {
-                        if !parent.exists() {
-                            fs::create_dir_all(parent).map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    format!("Failed to create parent directory: {}", e),
-                                )
-                            })?;
-                        }
+                    if let Some(parent) = outpath.parent()
+                        && !parent.exists()
+                    {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                format!("Failed to create parent directory: {}", e),
+                            )
+                        })?;
                     }
                     let mut outfile = fs::File::create(&outpath).map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyValueError, _>(

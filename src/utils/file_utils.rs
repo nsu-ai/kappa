@@ -80,30 +80,30 @@ impl FileUtils {
             
             if path.is_dir() {
                 // Skip hidden directories and common non-source directories
-                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if !dir_name.starts_with('.') && 
-                    !["node_modules", "target", "build", "dist", "__pycache__", ".git"].contains(&dir_name) {
-                        self.scan_directory_recursive(&path, files)?;
-                    }
+                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str())
+                    && !dir_name.starts_with('.')
+                    && !["node_modules", "target", "build", "dist", "__pycache__", ".git"]
+                        .contains(&dir_name)
+                {
+                    self.scan_directory_recursive(&path, files)?;
                 }
-            } else if path.is_file() {
-                if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-                    if PROGRAMMING_EXTENSIONS.contains(&extension.to_lowercase().as_str()) {
-                        let file_name = path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        
-                        let file_type = self.get_file_type(&extension);
-                        
-                        files.push(ProgrammingFile {
-                            name: file_name,
-                            path: path.clone(),
-                            file_type,
-                            content: None,
-                        });
-                    }
-                }
+            } else if path.is_file()
+                && let Some(extension) = path.extension().and_then(|ext| ext.to_str())
+                && PROGRAMMING_EXTENSIONS.contains(&extension.to_lowercase().as_str())
+            {
+                let file_name = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                let file_type = self.get_file_type(&extension);
+
+                files.push(ProgrammingFile {
+                    name: file_name,
+                    path: path.clone(),
+                    file_type,
+                    content: None,
+                });
             }
         }
         
