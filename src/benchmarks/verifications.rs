@@ -4,13 +4,20 @@
 use pyo3::prelude::*;
 use pyo3::PyErr;
 use pyo3::PyResult;
-// use pyo3::Python;
 use reqwest::Client;
 use std::path::Path;
+use std::sync::OnceLock;
 use walkdir::WalkDir;
 
 use crate::models::benchmarks_model::FileInformation;
 use crate::utils::git_utils;
+
+fn verification_runtime() -> &'static tokio::runtime::Runtime {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Runtime::new().expect("verification tokio runtime")
+    })
+}
 
 #[pyclass]
 pub struct BenchmarkVerification {
@@ -44,23 +51,10 @@ impl BenchmarkVerification {
         )
     }
 
-    // fn to_pyobject_from_value(value: &serde_json::Value) -> PyResult<PyObject> {
-    //     let s = serde_json::to_string(value)
-    //         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to serialize JSON: {}", e)))?;
-    //     Python::with_gil(|py| {
-    //         let json = py.import("json")?;
-    //         let loads = json.getattr("loads")?;
-    //         let py_obj = loads.call1((s,))?;
-    //         Ok(py_obj.into())
-    //     })
-    // }
-
     fn fetch_required_files(&self) -> PyResult<Vec<String>> {
         let client = Client::new();
         let url = self.get_files_url();
-
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to create runtime: {}", e)))?;
+        let rt = verification_runtime();
 
         let files = rt.block_on(async move {
             let resp = client
@@ -170,8 +164,7 @@ impl BenchmarkVerification {
         let body = serde_json::to_string(&file_infos)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to serialize files: {}", e)))?;
 
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to create runtime: {}", e)))?;
+        let rt = verification_runtime();
 
         let ok = rt.block_on(async move {
             let resp = client

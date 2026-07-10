@@ -1,6 +1,6 @@
 [package]
 name = "kappa-apk"
-version = "2.0.0-beta"
+version = "3.0.1"
 edition = "2024"
 description = "Python client SDK for the Kappa-framework ML/AI platform"
 license = "BSD-3-Clause"
@@ -26,6 +26,7 @@ dirs = "5.0"
 rand = "0.8"
 sha1 = "0.10.6"
 walkdir = "2"
+zeroize = { version = "1", features = ["zeroize_derive"] }
 
 [lints.clippy]
 uninlined_format_args = "allow"

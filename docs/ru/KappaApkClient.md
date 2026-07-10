@@ -19,7 +19,7 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 | Метод | HTTP | Описание |
 |---|---|---|
 | `connect()` | `POST /user-micro-services/v2/session/new` | Вход; возвращает словарь с данными пользователя и токеном |
-| `close()` | `DELETE /user-micro-services/v2/session/` | Выход; инвалидация токена |
+| `close()` | `DELETE /user-micro-services/v2/session` | Выход; инвалидация токена (только Bearer) |
 | `get_token()` | — | Текущий bearer-токен или `None` |
 | `is_authenticated()` | — | Есть ли сохранённый токен |
 | `get_base_url()` / `set_base_url(url)` | — | Получение/установка URL шлюза |

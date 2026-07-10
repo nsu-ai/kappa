@@ -17,16 +17,9 @@ use crate::models::datasets_model::{
     DatasetDownloadDetails, DatasetLabel, DatasetVersionDetails, NewDataset, NewDatasetEntity,
     NewDatasetVersion, UpdateDatasetEntity, UpdateDatasetRequest,
 };
-
-/// Serialize a `serde_json::Value` to a Python object via `json.loads`.
-/// Extracted to avoid repeating the same `.unwrap()` pattern everywhere.
-fn json_value_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
-    let json_str = serde_json::to_string(value).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Serialization error: {}", e))
-    })?;
-    let parsed = py.import("json")?.call_method1("loads", (json_str,))?;
-    Ok(parsed.into())
-}
+use crate::utils::python_json::{json_value_to_pyobject, rust_value_to_pyobject};
+use crate::users::users::Users;
+use zeroize::Zeroizing;
 
 /// HTTP client for authentication and API calls to the Kappa-Apk framework.
 ///
@@ -47,7 +40,7 @@ pub struct KappaApkClient {
     runtime: Arc<tokio::runtime::Runtime>,
     base_url: String,
     login_id: String,
-    passwd: String,
+    passwd: Zeroizing<String>,
     login_response: Option<User>,
 }
 
@@ -58,7 +51,7 @@ impl Clone for KappaApkClient {
             runtime: Arc::clone(&self.runtime),
             base_url: self.base_url.clone(),
             login_id: self.login_id.clone(),
-            passwd: self.passwd.clone(),
+            passwd: Zeroizing::new(String::new()),
             login_response: self.login_response.clone(),
         }
     }
@@ -139,12 +132,12 @@ impl ApiClient for KappaApkClient {
             } else {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(detail) = json.get("detail").and_then(|v| v.as_str()) {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            detail.to_string(),
-                        ));
-                    }
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let Some(detail) = json.get("detail").and_then(|v| v.as_str())
+                {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        detail.to_string(),
+                    ));
                 }
                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     if text.is_empty() {
@@ -261,12 +254,12 @@ impl ApiClient for KappaApkClient {
             } else {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(detail) = json.get("detail").and_then(|v| v.as_str()) {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            detail.to_string(),
-                        ));
-                    }
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let Some(detail) = json.get("detail").and_then(|v| v.as_str())
+                {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        detail.to_string(),
+                    ));
                 }
                 Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     if text.is_empty() {
@@ -350,7 +343,7 @@ impl KappaApkClient {
             runtime,
             base_url,
             login_id,
-            passwd,
+            passwd: Zeroizing::new(passwd),
             login_response: None,
         })
     }
@@ -365,9 +358,14 @@ impl KappaApkClient {
     /// print(f"Logged in as: {response['user_name']}")
     /// ```
     pub fn connect(&mut self) -> PyResult<PyObject> {
+        if self.passwd.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Password unavailable (cleared after login). Create a new KappaApkClient to reconnect.",
+            ));
+        }
         let login_request = LoginRequest {
             login_id: self.login_id.clone(),
-            passwd: self.passwd.clone(),
+            passwd: self.passwd.to_string(),
         };
         let login_url = format!("{}/user-micro-services/v2/session/new", self.base_url);
         let client = self.client.clone();
@@ -402,9 +400,11 @@ impl KappaApkClient {
         })?;
 
         self.login_response = Some(login_data.clone());
+        // Clear password from memory after successful authentication.
+        self.passwd = Zeroizing::new(String::new());
 
         // Return snake_case dict for Python consumers (User uses camelCase serde internally).
-        let json_value = serde_json::json!({
+        Python::with_gil(|py| rust_value_to_pyobject(py, &serde_json::json!({
             "user_id": login_data.user_id,
             "user_name": login_data.user_name,
             "first_name": login_data.first_name,
@@ -420,12 +420,11 @@ impl KappaApkClient {
                 "user_type_id": login_data.user_type_details.user_type_id,
                 "user_type": login_data.user_type_details.user_type
             },
-            "org_details": {
-                "org_id": login_data.org_details.org_id,
-                "org_name": login_data.org_details.org_name
-            }
-        });
-        Python::with_gil(|py| json_value_to_pyobject(py, &json_value))
+            "org_details": login_data.org_details.as_ref().map(|org| serde_json::json!({
+                "org_id": org.org_id,
+                "org_name": org.org_name
+            }))
+        })))
     }
 
     /// Make HTTP request with optional authentication.
@@ -477,7 +476,8 @@ impl KappaApkClient {
             )
         })?;
 
-        let logout_url = format!("{}/user-micro-services/v2/session/", self.base_url);
+        // v2: DELETE /session — identity from Bearer token only (no path params).
+        let logout_url = format!("{}/user-micro-services/v2/session", self.base_url);
         let token = login_response.token.clone().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Missing bearer token in login response",
@@ -508,6 +508,7 @@ impl KappaApkClient {
 
         // Clear stored credentials only after a successful server-side logout.
         self.login_response = None;
+        self.passwd = Zeroizing::new(String::new());
         Ok(())
     }
 
@@ -544,6 +545,11 @@ impl KappaApkClient {
     /// Return `True` if the client has a valid session token.
     pub fn is_authenticated(&self) -> bool {
         ApiClient::is_authenticated(self)
+    }
+
+    /// Get the authenticated user's profile (`GET /user-micro-services/v2/users/me`).
+    pub fn get_user_profile(&self) -> PyResult<User> {
+        Users::get_user_profile(self)
     }
 
     /// List datasets for the current user (paginated, raw JSON dict).
@@ -842,6 +848,8 @@ impl KappaApkClient {
     }
 
     /// Paginated entity search with optional name / status / version filters.
+    ///
+    /// Entity filter pagination is **0-based** (default `page=0`). Dataset list APIs use 1-based pages.
     #[pyo3(signature = (dataset_id, entity_name=None, entity_status=None, version_id=None, page=None, size=None, order_by=None, order=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn filter_dataset_entities(

@@ -21,7 +21,9 @@ def main():
         print(f"   User: {login_result['user_name']}")
         print(f"   Email: {login_result['email']}")
         print(f"   Token: {login_result['token'][:50]}...")
-        print(f"   Organization: {login_result['org_details']['org_name']}")
+        org = login_result.get("org_details")
+        org_name = org.get("org_name") if org else None
+        print(f"   Organization: {org_name or '(none)'}")
         print(f"   User Type: {login_result['user_type_details']['user_type']}")
         
         # Store token for subsequent requests

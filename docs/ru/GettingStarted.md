@@ -47,7 +47,7 @@ client = KappaApkClient(base_url, login_id="user@example.com", passwd="secret")
 info = client.connect()          # POST …/user-micro-services/v2/session/new
 print(info["token"], info.get("user_name"))
 
-client.close()                   # DELETE …/user-micro-services/v2/session/
+client.close()                   # DELETE …/user-micro-services/v2/session
 ```
 
 **Рекомендуется:** контекстный менеджер (автоматический вход и выход):
@@ -63,7 +63,7 @@ with KappaApkClient(base_url, login_id, passwd) as client:
 
 ```python
 import kappa_apk
-print(kappa_apk.version())   # "2.0.0-beta"
+print(kappa_apk.version())   # "3.0.1"
 ```
 
 ---

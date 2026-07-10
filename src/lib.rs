@@ -27,6 +27,7 @@ use models::datasets_model::{
 use models::datasets_model::{
     Dataset, DatasetDownloadDetails, DatasetItem, DatasetVersionDetails, ItemFile,
 };
+use models::users_model::{OrgDetails, User, UserTypeDetails};
 pub use traits::*;
 use crate::benchmarks::verifications::BenchmarkVerification;
 
@@ -41,6 +42,9 @@ fn version() -> PyResult<String> {
 fn kappa_apk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_class::<KappaApkClient>()?;
+    m.add_class::<User>()?;
+    m.add_class::<UserTypeDetails>()?;
+    m.add_class::<OrgDetails>()?;
     m.add_class::<BenchmarkVerification>()?;
     m.add_class::<KappaDataset>()?;
     m.add_class::<KappaDataLoader>()?;
