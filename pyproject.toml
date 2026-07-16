@@ -43,7 +43,9 @@ build-frontend = "build"
 test-command = "python -c \"import kappa_apk; print('ok', kappa_apk.version())\""
 
 [tool.cibuildwheel.linux]
-archs = ["x86_64", "aarch64"]
+# "auto" = native arch only (x86_64 on Intel/AMD, aarch64 on ARM).
+# Cross-arch aarch64 on x86_64 needs QEMU — see docs/BuildAndPublish.md.
+archs = ["auto"]
 manylinux-x86_64-image = "manylinux2014"
 manylinux-aarch64-image = "manylinux2014"
 

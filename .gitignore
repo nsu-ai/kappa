@@ -169,6 +169,7 @@ code_examples/output/
 code_examples/.venv/
 code_examples/**/mnist_cache/
 code_examples/data/
+local_test.py
 
 # IDE
 .vscode/
@@ -192,5 +193,5 @@ Thumbs.db
 # internal services
 internal_services/
 
-# internal docs
+# Maintainer-only notes (keep locally; do not publish to GitHub)
 internal_docs/

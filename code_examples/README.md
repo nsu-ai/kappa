@@ -1,6 +1,6 @@
 # Code Examples
 
-This directory contains practical examples of how to use the KappaApk Rust + Python library.
+This directory contains practical examples of how to use the kf-sdk Rust + Python library.
 
 ## Setup
 

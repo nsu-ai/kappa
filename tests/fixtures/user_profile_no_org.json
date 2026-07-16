@@ -1,0 +1,18 @@
+{
+  "userId": 42,
+  "userName": "independent_user",
+  "firstName": "Ada",
+  "middleName": null,
+  "lastName": "Lovelace",
+  "email": "ada@example.com",
+  "userTypeId": 4,
+  "orgId": null,
+  "userTypeDetails": {
+    "userTypeId": 4,
+    "userType": "AI/ML User"
+  },
+  "orgDetails": null,
+  "profilePic": null,
+  "token": "session-token",
+  "tokenExpiryDate": "2026-12-31T00:00:00Z"
+}

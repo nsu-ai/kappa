@@ -1,0 +1,21 @@
+{
+  "userId": 85,
+  "userName": "sasha",
+  "firstName": "Alexander",
+  "middleName": null,
+  "lastName": "Mishchenko",
+  "email": "a.mishchenko2@g.nsu.ru",
+  "userTypeId": 1,
+  "orgId": 1,
+  "userTypeDetails": {
+    "userTypeId": 1,
+    "userType": "Admin"
+  },
+  "orgDetails": {
+    "orgId": 1,
+    "orgName": "SDAML Lab NSU"
+  },
+  "profilePic": null,
+  "token": "session-token",
+  "tokenExpiryDate": "2026-12-31T00:00:00Z"
+}

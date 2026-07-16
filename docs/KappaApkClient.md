@@ -19,7 +19,7 @@ Paths below are appended to `base_url`. All authenticated dataset/benchmark call
 | Method | HTTP | Description |
 |---|---|---|
 | `connect()` | `POST /user-micro-services/v2/session/new` | Login; returns user info dict + token |
-| `close()` | `DELETE /user-micro-services/v2/session/` | Logout; invalidate token |
+| `close()` | `DELETE /user-micro-services/v2/session` | Logout; invalidate token (Bearer only) |
 | `get_token()` | — | Current bearer token or `None` |
 | `is_authenticated()` | — | Whether a token is stored |
 | `get_base_url()` / `set_base_url(url)` | — | Gateway URL get/set |

@@ -7,11 +7,10 @@ use urlencoding;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use futures_util::StreamExt;
-use tokio::io::AsyncWriteExt;
 
 use crate::traits::ApiClient;
 use crate::datasets::kappa_dataloader::KappaDataLoader;
+use crate::utils::zip_utils::{self, cache_is_complete};
 use crate::models::datasets_model::{
     Dataset,
     DatasetVersionDetails,
@@ -458,8 +457,8 @@ impl Datasets {
                 .join(format!("{}_{}", resolved_dataset_name, resolved_version_no))
         };
 
-        // Skip if already cached.
-        if data_dir.exists() {
+        // Skip if a prior download completed successfully (marker file present).
+        if cache_is_complete(&data_dir) {
             return Ok(DatasetDownloadDetails {
                 dataset_id: resolved_dataset_id,
                 data_path: data_dir.to_string_lossy().to_string(),
@@ -467,12 +466,6 @@ impl Datasets {
                 download_status: true,
             });
         }
-
-        fs::create_dir_all(&data_dir).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                format!("Failed to create cache directory: {}", e),
-            )
-        })?;
 
         let endpoint = format!(
             "/data-micro-services/v2/datasets/versions/archive/{}/{}",
@@ -482,122 +475,18 @@ impl Datasets {
         let url = format!("{}{}", client.get_base_url(), endpoint);
         let http = client.get_http_client();
         let runtime = client.get_runtime();
+        let data_dir_dl = data_dir.clone();
 
-        let result = runtime.block_on(async {
-            let response = http
-                .get(&url)
-                .header("accept", "*/*")
-                .header("Authorization", format!("Bearer {}", token))
-                .send()
+        let result = runtime.block_on(async move {
+            zip_utils::download_and_extract_zip(&http, &url, Some(&token), &data_dir_dl)
                 .await
                 .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyConnectionError, _>(
-                        format!("Failed to download archive: {}", e),
-                    )
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(e)
                 })?;
-
-            if !response.status().is_success() {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Download failed with status: {}", response.status()),
-                ));
-            }
-
-            // Stream response body directly to a temp file — avoids loading the entire
-            // archive into memory before writing (important for large datasets).
-            let temp_zip_path = data_dir.join("temp_archive.zip");
-            {
-                let mut file = tokio::fs::File::create(&temp_zip_path).await.map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Failed to create temporary file: {}", e),
-                    )
-                })?;
-                let mut stream = response.bytes_stream();
-                while let Some(chunk) = stream.next().await {
-                    let chunk = chunk.map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Download error: {}", e),
-                        )
-                    })?;
-                    file.write_all(&chunk).await.map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Write error: {}", e),
-                        )
-                    })?;
-                }
-                file.flush().await.map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Flush error: {}", e),
-                    )
-                })?;
-            } // file is dropped and closed here
-
-            // Extract synchronously — zip crate does not have async support.
-            let zip_file = fs::File::open(&temp_zip_path).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Failed to open zip file: {}", e),
-                )
-            })?;
-            let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Failed to read zip archive: {}", e),
-                )
-            })?;
-
-            for i in 0..archive.len() {
-                let mut entry = archive.by_index(i).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Failed to access entry in zip: {}", e),
-                    )
-                })?;
-
-                let outpath = data_dir.join(entry.name());
-
-                // Zip-slip prevention: reject any path that escapes the target directory.
-                if !outpath.starts_with(&data_dir) {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Zip entry '{}' would escape the extraction directory",
-                        entry.name()
-                    )));
-                }
-
-                if entry.name().ends_with('/') {
-                    fs::create_dir_all(&outpath).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Failed to create directory: {}", e),
-                        )
-                    })?;
-                } else {
-                    if let Some(parent) = outpath.parent()
-                        && !parent.exists()
-                    {
-                        fs::create_dir_all(parent).map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                format!("Failed to create parent directory: {}", e),
-                            )
-                        })?;
-                    }
-                    let mut outfile = fs::File::create(&outpath).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Failed to create file: {}", e),
-                        )
-                    })?;
-                    std::io::copy(&mut entry, &mut outfile).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Failed to write file: {}", e),
-                        )
-                    })?;
-                }
-            }
-
-            fs::remove_file(&temp_zip_path).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Failed to delete temporary zip file: {}", e),
-                )
-            })?;
 
             Ok(DatasetDownloadDetails {
                 dataset_id: resolved_dataset_id,
-                data_path: data_dir.to_string_lossy().to_string(),
+                data_path: data_dir_dl.to_string_lossy().to_string(),
                 version_no: resolved_version_no,
                 download_status: true,
             })
@@ -1575,6 +1464,9 @@ tf_dataset = tf.data.Dataset.from_generator(
     }
 
     /// `GET /datasets/datasetEntities/filter/{dataset_id}` — paginated entity search.
+    ///
+    /// **Pagination:** entity filter endpoints use **0-based** `page` (default `0`).
+    /// Dataset list/filter APIs use **1-based** `page` (default `1`) — see `list_datasets_json`.
     pub fn filter_dataset_entities<T: ApiClient>(
         client: &T,
         dataset_id: i32,

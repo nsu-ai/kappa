@@ -7,11 +7,9 @@ use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
-use futures_util::StreamExt;
-use tokio::io::AsyncWriteExt;
-
 use crate::traits::ApiClient;
 use crate::client::KappaApkClient;
+use crate::utils::zip_utils::{self, cache_is_complete};
 use crate::models::benchmarks_model::{
     Benchmark,
     BenchmarkResult,
@@ -182,7 +180,7 @@ impl Benchmarks {
             PathBuf::from(&dataset_path_str).join(&benchmark_id)
         };
 
-        if !data_dir.exists() {
+        if !cache_is_complete(&data_dir) {
             let (base_url, http_client, runtime, token) = Python::with_gil(|py| -> PyResult<_> {
                 let client = self.client.borrow(py);
                 let base_url = client.get_base_url();
@@ -192,12 +190,6 @@ impl Benchmarks {
                 Ok((base_url, http_client, runtime, token))
             })?;
 
-            fs::create_dir_all(&data_dir).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Failed to create cache directory: {}", e),
-                )
-            })?;
-
             let url = format!(
                 "{}/model-micro-services/v2/benchmarks/datasets/download/{}",
                 base_url, benchmark_id
@@ -205,103 +197,11 @@ impl Benchmarks {
             let data_dir_dl = data_dir.clone();
 
             runtime.block_on(async move {
-                let response = http_client
-                    .get(&url)
-                    .header("accept", "*/*")
-                    .header("Authorization", format!("Bearer {}", token))
-                    .send()
+                zip_utils::download_and_extract_zip(&http_client, &url, Some(&token), &data_dir_dl)
                     .await
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyConnectionError, _>(
-                        format!("Failed to download benchmark dataset: {}", e),
-                    ))?;
-
-                if !response.status().is_success() {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Download failed with status: {}", response.status()),
-                    ));
-                }
-
-                let temp_zip_path = data_dir_dl.join("temp_archive.zip");
-                {
-                    let mut file = tokio::fs::File::create(&temp_zip_path).await.map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Failed to create temporary file: {}", e),
-                        )
-                    })?;
-                    let mut stream = response.bytes_stream();
-                    while let Some(chunk) = stream.next().await {
-                        let chunk = chunk.map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Download error: {}", e),
-                        ))?;
-                        file.write_all(&chunk).await.map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Write error: {}", e),
-                        ))?;
-                    }
-                    file.flush().await.map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Flush error: {}", e),
-                    ))?;
-                }
-
-                let zip_file = fs::File::open(&temp_zip_path).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Failed to open zip file: {}", e),
-                    )
-                })?;
-                let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Failed to read zip archive: {}", e),
-                    )
-                })?;
-
-                for i in 0..archive.len() {
-                    let mut entry = archive.by_index(i).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            format!("Failed to access zip entry: {}", e),
-                        )
-                    })?;
-                    let outpath = data_dir_dl.join(entry.name());
-                    if !outpath.starts_with(&data_dir_dl) {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "Zip entry '{}' would escape the extraction directory",
-                            entry.name()
-                        )));
-                    }
-                    if entry.name().ends_with('/') {
-                        fs::create_dir_all(&outpath).map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                format!("Failed to create directory: {}", e),
-                            )
-                        })?;
-                    } else {
-                        if let Some(parent) = outpath.parent()
-                            && !parent.exists()
-                        {
-                            fs::create_dir_all(parent).map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    format!("Failed to create parent directory: {}", e),
-                                )
-                            })?;
-                        }
-                        let mut outfile = fs::File::create(&outpath).map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                format!("Failed to create file: {}", e),
-                            )
-                        })?;
-                        std::io::copy(&mut entry, &mut outfile).map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                format!("Failed to write file: {}", e),
-                            )
-                        })?;
-                    }
-                }
-
-                fs::remove_file(&temp_zip_path).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Failed to delete temporary zip file: {}", e),
-                    )
-                })?;
-
-                Ok(())
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(e)
+                    })
             })?;
         }
 

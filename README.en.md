@@ -13,14 +13,14 @@ Built with Rust + [PyO3](https://pyo3.rs), distributed as the `kf-sdk` Python pa
 
 | | |
 |---|---|
-| **Version** | 3.0.0 |
+| **Version** | 3.0.1 |
 | **Python** | 3.9+ |
 | **Rust edition** | 2024 |
 | **License** | BSD-3-Clause ([LICENSE.md](LICENSE.md)) |
 
 ---
 
-# Kappa — ϰ-framework for dataset and model management, version 3.0.0
+# Kappa — ϰ-framework for dataset and model management, version 3.0.1
 
 Kappa is a conceptual and software framework for dataset curation and model lifecycle management, developed at the [AI Research Center](https://nsu.ru/n/ai-center) for Construction and Urban Environment, Novosibirsk State University.
 
@@ -41,7 +41,7 @@ Kumar R., Pavlovsky E.N., Ivankov P.S., Denisov S.S., Mishchenko A.S., Bolotov K
 
 * [Implemented 2024, v1.0.0] Annotation authorship tracking, including automated labeling tools
 * [Implemented 2025, v2.0.0] AI model benchmarking
-* [Implemented 2026, v3.0.0] Index all datasets on the internet (construction and urban environment domain), index all AI tasks from scientific publications and open-source code (construction and urban environment domain)
+* [Planned 2026] Index datasets and AI tasks from scientific publications and open-source code (construction and urban environment domain)
 
 ## Projects built on the framework
 

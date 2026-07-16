@@ -2,9 +2,9 @@
 
 **English:** [../BuildAndPublish.md](../BuildAndPublish.md)
 
-**PyPI-проект:** [`kf-sdk`](https://pypi.org/project/kf-sdk/) — wheels именуются `kf_sdk-*.whl`; импорт: `kappa_apk`.
-
 ---
+
+## Локальная сборка (`build_wheel.sh`)
 
 | Режим | Команда |
 |---|---|
@@ -39,7 +39,7 @@ twine check dist/*
 
 ## Кроссплатформенные wheels (cibuildwheel)
 
-Настроено в [`pyproject.toml`](../../pyproject.toml):
+Настроено в [`pyproject.toml`](../../pyproject.toml). По умолчанию Linux использует **`archs = ["auto"]`** (только нативная архитектура), поэтому `cibuildwheel` работает на x86_64 без QEMU.
 
 ```bash
 pip install cibuildwheel maturin
@@ -49,9 +49,25 @@ twine check dist/*
 twine upload dist/*
 ```
 
-| Платформа | Теги |
+### Архитектуры Linux
+
+| Цель | Команда |
 |---|---|
-| Linux | manylinux2014 x86_64 + aarch64 |
+| **Локально (нативная арх.)** | `cibuildwheel --output-dir dist` |
+| **x86_64 + aarch64** (релиз) | См. [GitHub Actions](#github-actions) или QEMU локально (ниже) |
+
+**Почему `exec format error`?** На x86_64 сборка `manylinux2014_aarch64` требует эмуляции ARM. Без QEMU Docker не может запустить aarch64-образ.
+
+**Локальная мультиарх (опционально):**
+
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install all
+CIBW_ARCHS_LINUX="x86_64 aarch64" cibuildwheel --output-dir dist
+```
+
+| Платформа | Теги `cibuildwheel` по умолчанию |
+|---|---|
+| Linux | manylinux2014, нативная арх. (`auto`) |
 | macOS | x86_64 + arm64 |
 | Windows | AMD64 |
 
@@ -62,9 +78,9 @@ twine upload dist/*
 | Workflow | Триггер | Действие |
 |---|---|---|
 | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | push / PR | `cargo test`, clippy, maturin wheels (py3.9–3.13), sdist |
-| [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml) | Release / вручную | sdist + cibuildwheel на Linux/macOS/Windows → PyPI |
+| [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml) | Release / вручную | sdist + cibuildwheel на Linux/macOS/Windows → PyPI (Linux: QEMU для aarch64) |
 
-**Trusted publishing PyPI:** настройте окружение `pypi` на GitHub, создайте тег Release (например, `v3.0.0`).
+**Trusted publishing PyPI:** настройте окружение `pypi` на GitHub, создайте тег Release (например, `v3.0.1`).
 
 ---
 

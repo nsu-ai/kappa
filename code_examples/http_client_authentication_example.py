@@ -1,104 +1,115 @@
 #!/usr/bin/env python3
 """
-Example usage of the KappaApk HTTP client for authentication and API calls.
+Example usage of the kf-sdk client for authentication and API calls.
+
+Run::
+
+    python http_client_authentication_example.py \\
+        --base-url http://127.0.0.1:8060 --login-id user@example.com --password '***'
 """
 
-import kappa_apk
-import json
+from __future__ import annotations
 
-def main():
-    # Create HTTP client with base URL
-    base_url = "http://172.16.71.20:8060"
-    client = kappa_apk.HttpClient(base_url)
-    
-    print("=== KappaApk HTTP Client Example ===\n")
-    
-    # Example 1: Authenticate user
+import argparse
+import getpass
+import json
+import sys
+
+import kappa_apk
+from kappa_apk import KappaApkClient
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="kf-sdk authentication and API call example",
+    )
+    parser.add_argument(
+        "--base-url",
+        default="http://127.0.0.1:8060",
+        help="Kappa API gateway base URL (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--login-id",
+        required=True,
+        help="Username or email for login",
+    )
+    parser.add_argument(
+        "--password",
+        default=None,
+        help="Password (prompted securely if omitted)",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    password = args.password if args.password is not None else getpass.getpass("Password: ")
+    if not password:
+        print("✗ Password is required", file=sys.stderr)
+        return 1
+
+    client = KappaApkClient(args.base_url, args.login_id, password)
+
+    print("=== kf-sdk HTTP Client Example ===\n")
+
     print("1. Authenticating user...")
     try:
-        login_result = client.authenticate("admin", "admin@123")
+        login_result = client.connect()
         print("✓ Authentication successful!")
         print(f"   User: {login_result['user_name']}")
         print(f"   Email: {login_result['email']}")
-        print(f"   Token: {login_result['token'][:50]}...")
-        print(f"   Organization: {login_result['org_details']['org_name']}")
-        print(f"   User Type: {login_result['user_type_details']['user_type']}")
-        
-        # Store token for subsequent requests
-        auth_token = login_result['token']
-        
+        token = login_result.get("token") or ""
+        print(f"   Token: {token[:50]}..." if token else "   Token: (none)")
+        org = login_result.get("org_details")
+        org_name = org.get("org_name") if org else None
+        print(f"   Organization: {org_name or '(none)'}")
+        ut = login_result.get("user_type_details") or {}
+        print(f"   User Type: {ut.get('user_type', '(unknown)')}")
     except Exception as e:
         print(f"✗ Authentication failed: {e}")
-        return
-    
-    print("\n" + "="*50 + "\n")
-    
-    # Example 2: Make authenticated request
+        return 1
+
+    print("\n" + "=" * 50 + "\n")
+
     print("2. Making authenticated request...")
     try:
-        # Example: Get current user profile
         response = client.make_request(
             method="GET",
             endpoint="/user-micro-services/v2/users/me",
             data=None,
-            token=auth_token
+            token=None,
         )
         print("✓ Authenticated request successful!")
         print(f"   Response: {json.dumps(response, indent=2)}")
-        
     except Exception as e:
         print(f"✗ Authenticated request failed: {e}")
-    
-    print("\n" + "="*50 + "\n")
-    
-    # Example 3: Make POST request with data
-    print("3. Making POST request with data...")
-    try:
-        # Example: Filter datasets
-        post_data = {
-            "page": 1,
-            "size": 10,
-            "orderBy": "modifiedOn",
-            "orderKeyword": "DESC"
-        }
 
-        response = client.make_request(
-            method="GET",
-            endpoint="/data-micro-services/v2/datasets/filter",
-            data=json.dumps(post_data),
-            token=auth_token
+    print("\n" + "=" * 50 + "\n")
+
+    print("3. Listing datasets (filter)...")
+    try:
+        response = client.list_datasets(
+            page=1, size=10, order_by="modifiedOn", order_keyword="DESC"
         )
-        print("✓ POST request successful!")
+        print("✓ Dataset list successful!")
         print(f"   Response: {json.dumps(response, indent=2)}")
-        
     except Exception as e:
-        print(f"✗ POST request failed: {e}")
-    
-    print("\n" + "="*50 + "\n")
-    
-    # Example 4: Error handling
-    print("4. Testing error handling...")
-    try:
-        # Try to authenticate with wrong credentials
-        client.authenticate("wrong_user", "wrong_password")
-        print("✗ Should have failed with wrong credentials")
-        
-    except Exception as e:
-        print("✓ Correctly handled authentication error")
-        print(f"   Error: {e}")
+        print(f"✗ Dataset list failed: {e}")
 
-def test_basic_function():
-    """Test the basic sum_as_string function"""
-    print("Testing basic function...")
-    result = kappa_apk.sum_as_string(5, 3)
-    print(f"sum_as_string(5, 3) = {result}")
-    assert result == "8"
-    print("✓ Basic function test passed!")
+    print("\n" + "=" * 50 + "\n")
+
+    print("4. Closing session...")
+    try:
+        client.close()
+        print("✓ Session closed")
+    except Exception as e:
+        print(f"✗ Close failed: {e}")
+        return 1
+
+    return 0
+
 
 if __name__ == "__main__":
-    # Test basic functionality first
-    test_basic_function()
-    print("\n" + "="*50 + "\n")
-    
-    # Run main example
-    main() 
+    print(f"kappa_apk version: {kappa_apk.version()}\n")
+    print("=" * 50 + "\n")
+    sys.exit(main())

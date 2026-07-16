@@ -14,6 +14,7 @@ pub struct UserTypeDetails {
     pub user_type: Option<String>,
 }
 
+/// Organization summary embedded in user profile responses.
 #[pyclass]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,9 +41,13 @@ pub struct User {
     #[serde(default)]
     pub email: Option<String>,
     pub user_type_id: i32,
-    pub org_id: i32,
+    /// `orgId` — optional in v2 (`null` or `0` for users without an organization).
+    #[serde(default)]
+    pub org_id: Option<i32>,
     pub user_type_details: UserTypeDetails,
-    pub org_details: OrgDetails,
+    /// `orgDetails` — optional in v2 (`null` when the user has no organization).
+    #[serde(default)]
+    pub org_details: Option<OrgDetails>,
     #[serde(default)]
     pub profile_pic: Option<String>,
     #[serde(default)]

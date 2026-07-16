@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Build script for KappaApk Rust + Python wheels and sdist
+# Build script for kf-sdk Rust + Python wheels and sdist
 # Usage: ./build_wheel.sh [options]
 #
 # Modes (pick one):

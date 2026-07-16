@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Iterator, Optional
 
 def version() -> str:
-    """Return the kappa-apk library version string."""
+    """Return the kf-sdk library version string."""
     ...
 
 # ---------------------------------------------------------------------------
@@ -521,6 +521,39 @@ class NewDatasetVersion:
     def to_api_json(self) -> str: ...
 
 # ---------------------------------------------------------------------------
+# User profile types
+# ---------------------------------------------------------------------------
+
+class UserTypeDetails:
+    user_type_id: int
+    user_type: Optional[str]
+
+class OrgDetails:
+    org_id: int
+    org_name: Optional[str]
+
+class User:
+    """Authenticated user profile from ``GET /user-micro-services/v2/users/me``.
+
+    v2 API: ``orgId`` and ``orgDetails`` are optional — both may be ``null`` for
+    users without an organization (independent / orgless accounts).
+    """
+
+    user_id: int
+    user_name: Optional[str]
+    first_name: Optional[str]
+    middle_name: Optional[str]
+    last_name: Optional[str]
+    email: Optional[str]
+    user_type_id: int
+    org_id: Optional[int]
+    user_type_details: UserTypeDetails
+    org_details: Optional[OrgDetails]
+    profile_pic: Optional[str]
+    token: Optional[str]
+    token_expiry_date: Optional[str]
+
+# ---------------------------------------------------------------------------
 # Main client
 # ---------------------------------------------------------------------------
 
@@ -564,6 +597,11 @@ class KappaApkClient:
         ...
 
     def is_authenticated(self) -> bool: ...
+
+    def get_user_profile(self) -> User:
+        """Return the authenticated user's profile (``GET /user-micro-services/v2/users/me``)."""
+        ...
+
     def get_base_url(self) -> str: ...
     def set_base_url(self, url: str) -> None: ...
 
