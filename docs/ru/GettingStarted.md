@@ -5,7 +5,7 @@
 ## Установка
 
 ```bash
-pip install kappa-apk
+pip install kf-sdk
 ```
 
 Сборки wheels публикуются для **Linux (manylinux)**, **macOS** (Intel + Apple Silicon) и **Windows**, Python **3.9–3.13**.

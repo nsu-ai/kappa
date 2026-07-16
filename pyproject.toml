@@ -3,7 +3,7 @@ requires = ["maturin>=1.9,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "kappa-apk"
+name = "kf-sdk"
 description = "Python client SDK for the Kappa-framework ML/AI platform"
 readme = "README.md"
 license = "BSD-3-Clause"

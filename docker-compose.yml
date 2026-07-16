@@ -14,7 +14,7 @@ services:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
     # Override the default command for interactive development
-    # command: ["python3", "-i", "-c", "import KappaApk; print('Ready for development')"]
+    # command: ["python3", "-i", "-c", "import kappa_apk; print('Ready for development')"]
     
   # Development service with hot reloading (optional)
   kappaapk-dev:

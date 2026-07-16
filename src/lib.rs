@@ -31,7 +31,7 @@ use models::users_model::{OrgDetails, User, UserTypeDetails};
 pub use traits::*;
 use crate::benchmarks::verifications::BenchmarkVerification;
 
-/// Returns the version of the kappa-apk library.
+/// Returns the version of the kf-sdk library.
 #[pyfunction]
 fn version() -> PyResult<String> {
     Ok(env!("CARGO_PKG_VERSION").to_string())

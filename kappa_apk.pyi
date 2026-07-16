@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Iterator, Optional
 
 def version() -> str:
-    """Return the kappa-apk library version string."""
+    """Return the kf-sdk library version string."""
     ...
 
 # ---------------------------------------------------------------------------
