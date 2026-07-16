@@ -2,7 +2,7 @@
 
 [![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/main/LICENSE.md)
 ![Python 3.9–3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-green.svg)
-[![PyPI Downloads](https://static.pepy.tech/badge/kf-sdk)](https://pepy.tech/projects/kf-sdk)
+[![PyPI Downloads](https://pypi.org/project/kf-sdk/)](https://pypi.org/project/kf-sdk/)
 ![Releases](https://img.shields.io/github/release/nsu-ai/kappa.svg)
 
 Python client SDK for **Kappa-framework** — a self-hosted microservices platform for ML/AI research workflows.

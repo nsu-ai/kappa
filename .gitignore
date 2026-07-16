@@ -169,6 +169,7 @@ code_examples/output/
 code_examples/.venv/
 code_examples/**/mnist_cache/
 code_examples/data/
+local_test.py
 
 # IDE
 .vscode/
