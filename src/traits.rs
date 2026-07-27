@@ -39,6 +39,34 @@ pub trait ApiClient {
         ))
     }
 
+    /// Multipart upload of `files` parts only (optional query string already in endpoint).
+    fn submit_multipart_files(
+        &self,
+        _method: &str,
+        _endpoint: String,
+        _file_parts: Vec<(Vec<u8>, String)>,
+        _token: Option<String>,
+    ) -> PyResult<PyObject> {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This ApiClient does not support multipart file upload",
+        ))
+    }
+
+    /// Bulk entity upload: multipart `sources` (JSON text) + `file` + optional headers.
+    fn submit_bulk_upload(
+        &self,
+        _endpoint: String,
+        _sources_json: String,
+        _file_bytes: Vec<u8>,
+        _file_name: String,
+        _headers: Vec<(String, String)>,
+        _token: Option<String>,
+    ) -> PyResult<PyObject> {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This ApiClient does not support bulk upload",
+        ))
+    }
+
     fn is_authenticated(&self) -> bool {
         self.get_token().is_some()
     }

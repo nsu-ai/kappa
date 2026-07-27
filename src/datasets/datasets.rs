@@ -1338,8 +1338,8 @@ tf_dataset = tf.data.Dataset.from_generator(
 
     /// Soft-delete a dataset by setting `datasetStatus = 0`.
     ///
-    /// The service uses soft-deletes; deleted datasets can be recovered via the
-    /// `/datasets/recover` endpoint.
+    /// The service uses soft-deletes; deleted datasets can be recovered via
+    /// [`Self::recover_datasets`].
     pub fn delete_dataset<T: ApiClient>(
         client: &T,
         dataset_id: i32,
@@ -1353,6 +1353,30 @@ tf_dataset = tf.data.Dataset.from_generator(
         })
         .to_string();
         client.make_request("PUT".to_string(), endpoint, Some(body), Some(token))
+    }
+
+    /// `POST /datasets/recover` — recover soft-deleted datasets by ID list.
+    pub fn recover_datasets<T: ApiClient>(
+        client: &T,
+        dataset_ids: Vec<i32>,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = "/data-micro-services/v2/datasets/recover".to_string();
+        let body = serde_json::json!({ "datasetIds": dataset_ids }).to_string();
+        client.make_request("POST".to_string(), endpoint, Some(body), Some(token))
+    }
+
+    /// `GET /datasets/nameAvailability?datasetName=` — check unique name before create.
+    pub fn check_dataset_name_availability<T: ApiClient>(
+        client: &T,
+        dataset_name: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/nameAvailability?datasetName={}",
+            urlencoding::encode(dataset_name)
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
     }
 
     // -----------------------------------------------------------------------
@@ -1523,6 +1547,249 @@ tf_dataset = tf.data.Dataset.from_generator(
         client.make_request("DELETE".to_string(), endpoint, Some(body), Some(token))
     }
 
+    /// `POST /datasets/datasetEntities/recover` — recover soft-deleted entities.
+    pub fn recover_dataset_entities<T: ApiClient>(
+        client: &T,
+        dataset_entity_ids: Vec<String>,
+        version_id: Option<i32>,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let mut endpoint = "/data-micro-services/v2/datasets/datasetEntities/recover".to_string();
+        if let Some(vid) = version_id {
+            endpoint.push_str(&format!("?version_id={}", vid));
+        }
+        let body = serde_json::json!(dataset_entity_ids).to_string();
+        client.make_request("POST".to_string(), endpoint, Some(body), Some(token))
+    }
+
+    /// `POST /datasets/datasetEntities/files/{dataset_id}/{entity_id}` — attach files.
+    pub fn upload_dataset_entity_files<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        entity_id: &str,
+        file_paths: Vec<String>,
+        file_category: Option<String>,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let category = file_category.unwrap_or_else(|| "input".to_string());
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/files/{}/{}?file_category={}",
+            dataset_id,
+            entity_id,
+            urlencoding::encode(&category)
+        );
+        let parts = resolve_entity_file_sources(client, &file_paths)?;
+        if parts.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "file_paths must resolve to at least one file",
+            ));
+        }
+        client.submit_multipart_files("POST", endpoint, parts, Some(token))
+    }
+
+    /// `DELETE /datasets/datasetEntities/files` — soft-delete entity files by ID list.
+    pub fn delete_dataset_entity_files<T: ApiClient>(
+        client: &T,
+        entity_file_ids: Vec<String>,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = "/data-micro-services/v2/datasets/datasetEntities/files".to_string();
+        let body = serde_json::json!(entity_file_ids).to_string();
+        client.make_request("DELETE".to_string(), endpoint, Some(body), Some(token))
+    }
+
+    // -----------------------------------------------------------------------
+    // Bulk entity upload
+    // -----------------------------------------------------------------------
+
+    /// `POST /datasets/datasetEntities/bulk/{dataset_id}` — start async bulk upload job.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bulk_upload_dataset_entities<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        file_path: &str,
+        upload_type: &str,
+        labeling_algo: &str,
+        source: Option<String>,
+        dataset_schema: Option<serde_json::Value>,
+        bulk_split: Option<String>,
+        strict: bool,
+        idempotency_key: Option<String>,
+    ) -> PyResult<PyObject> {
+        let upload_type = upload_type.trim().to_ascii_lowercase();
+        if upload_type != "archive" && upload_type != "csv" {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "upload_type must be 'archive' or 'csv'",
+            ));
+        }
+        let algo = labeling_algo.trim();
+        if algo.is_empty() || algo.eq_ignore_ascii_case("none") {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "labeling_algo is required and cannot be empty or 'none'",
+            ));
+        }
+        let path = Path::new(file_path);
+        if !path.is_file() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "bulk upload file not found: {}",
+                file_path
+            )));
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if upload_type == "archive" && ext != "zip" {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "upload_type 'archive' requires a .zip file",
+            ));
+        }
+        if upload_type == "csv" && ext != "csv" {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "upload_type 'csv' requires a .csv file",
+            ));
+        }
+
+        let file_bytes = fs::read(path).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Failed to read {}: {}",
+                file_path, e
+            ))
+        })?;
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload.bin")
+            .to_string();
+
+        let mut sources = serde_json::Map::new();
+        sources.insert("uploadType".to_string(), serde_json::json!(upload_type));
+        sources.insert("labelingAlgo".to_string(), serde_json::json!(algo));
+        if let Some(s) = source {
+            sources.insert("source".to_string(), serde_json::json!(s));
+        }
+        if let Some(schema) = dataset_schema {
+            sources.insert("datasetSchema".to_string(), schema);
+        } else {
+            sources.insert("datasetSchema".to_string(), serde_json::json!({}));
+        }
+        if let Some(split) = bulk_split {
+            sources.insert("bulkSplit".to_string(), serde_json::json!(split));
+        }
+        let sources_json = serde_json::Value::Object(sources).to_string();
+
+        let key = idempotency_key.unwrap_or_else(|| uuid_v4_simple());
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/{}?strict={}",
+            dataset_id, strict
+        );
+        let headers = vec![("X-Idempotency-Key".to_string(), key)];
+        client.submit_bulk_upload(
+            endpoint,
+            sources_json,
+            file_bytes,
+            file_name,
+            headers,
+            Some(client.require_token()?),
+        )
+    }
+
+    /// `GET /datasets/datasetEntities/bulk/jobs/{job_id}?datasetId=`
+    pub fn get_bulk_upload_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs/{}?datasetId={}",
+            job_id, dataset_id
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `GET /datasets/datasetEntities/bulk/jobs?datasetId=`
+    pub fn list_bulk_upload_jobs<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs?datasetId={}",
+            dataset_id
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `DELETE /datasets/datasetEntities/bulk/jobs/{job_id}?datasetId=`
+    pub fn cancel_bulk_upload_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs/{}?datasetId={}",
+            job_id, dataset_id
+        );
+        client.make_request("DELETE".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `DELETE /datasets/datasetEntities/bulk/jobs/stale?datasetId=`
+    pub fn cancel_stale_bulk_upload_jobs<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs/stale?datasetId={}",
+            dataset_id
+        );
+        client.make_request("DELETE".to_string(), endpoint, None, Some(token))
+    }
+
+    /// Poll until job reaches a terminal status (`completed` / `failed` / `cancelled`) or timeout.
+    pub fn wait_for_bulk_upload_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+        poll_interval_secs: Option<f64>,
+        timeout_secs: Option<f64>,
+    ) -> PyResult<PyObject> {
+        let interval = poll_interval_secs.unwrap_or(2.0).max(0.2);
+        let timeout = timeout_secs.unwrap_or(600.0);
+        let start = std::time::Instant::now();
+        loop {
+            let status_obj = Self::get_bulk_upload_job(client, dataset_id, job_id)?;
+            let terminal = Python::with_gil(|py| -> PyResult<bool> {
+                let status = status_obj
+                    .bind(py)
+                    .call_method1("get", ("status",))
+                    .or_else(|_| status_obj.bind(py).call_method1("get", ("Status",)))
+                    .ok();
+                let s = status
+                    .and_then(|v| v.extract::<String>().ok())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                Ok(matches!(
+                    s.as_str(),
+                    "completed" | "complete" | "failed" | "error" | "cancelled" | "canceled"
+                ))
+            })?;
+            if terminal {
+                return Ok(status_obj);
+            }
+            if start.elapsed().as_secs_f64() >= timeout {
+                return Err(PyErr::new::<pyo3::exceptions::PyTimeoutError, _>(format!(
+                    "Timed out waiting for bulk upload job {} after {}s",
+                    job_id, timeout
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_secs_f64(interval));
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Dataset version management
     // -----------------------------------------------------------------------
@@ -1613,6 +1880,22 @@ fn guess_filename_from_url(url: &str) -> String {
             }
         })
         .unwrap_or_else(|| "download".to_string())
+}
+
+/// Simple UUID v4 hex string for idempotency keys (no extra crate).
+fn uuid_v4_simple() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11],
+        bytes[12], bytes[13], bytes[14], bytes[15]
+    )
 }
 
 /// Resolve user-supplied paths and URLs into `(bytes, filename)` pairs for multipart `files` parts.

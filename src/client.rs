@@ -130,22 +130,7 @@ impl ApiClient for KappaApkClient {
                     })?;
                 Python::with_gil(|py| json_value_to_pyobject(py, &json_data))
             } else {
-                let status = response.status();
-                let text = response.text().await.unwrap_or_default();
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
-                    && let Some(detail) = json.get("detail").and_then(|v| v.as_str())
-                {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        detail.to_string(),
-                    ));
-                }
-                Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    if text.is_empty() {
-                        format!("HTTP error: {}", status)
-                    } else {
-                        text
-                    },
-                ))
+                Err(http_error_to_pyerr(response.status(), response.text().await.unwrap_or_default()))
             }
         })
     }
@@ -191,40 +176,22 @@ impl ApiClient for KappaApkClient {
         let jfield = json_field_name.to_string();
 
         self.runtime.block_on(async move {
-            let empty = file_parts.is_empty();
-            let mut request = match (method_owned.as_str(), empty) {
-                ("POST", true) => http
-                    .post(&url)
-                    .form(&[(jfield.as_str(), json_value.as_str())]),
-                ("PUT", true) => http
-                    .put(&url)
-                    .form(&[(jfield.as_str(), json_value.as_str())]),
-                ("POST", false) => {
-                    let mut form = multipart::Form::new().text(jfield.clone(), json_value);
-                    for (bytes, fname) in file_parts {
-                        let part = multipart::Part::bytes(bytes)
-                            .file_name(fname)
-                            .mime_str("application/octet-stream")
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                            })?;
-                        form = form.part("files", part);
-                    }
-                    http.post(&url).multipart(form)
-                }
-                ("PUT", false) => {
-                    let mut form = multipart::Form::new().text(jfield.clone(), json_value);
-                    for (bytes, fname) in file_parts {
-                        let part = multipart::Part::bytes(bytes)
-                            .file_name(fname)
-                            .mime_str("application/octet-stream")
-                            .map_err(|e| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                            })?;
-                        form = form.part("files", part);
-                    }
-                    http.put(&url).multipart(form)
-                }
+            // Always multipart so FastAPI `files: List[UploadFile] = File(...)` accepts
+            // file-less (tabular) creates the same way as the React FormData path.
+            let mut form = multipart::Form::new().text(jfield.clone(), json_value);
+            for (bytes, fname) in file_parts {
+                let part = multipart::Part::bytes(bytes)
+                    .file_name(fname)
+                    .mime_str("application/octet-stream")
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                    })?;
+                form = form.part("files", part);
+            }
+
+            let mut request = match method_owned.as_str() {
+                "POST" => http.post(&url).multipart(form),
+                "PUT" => http.put(&url).multipart(form),
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                         "Unsupported method for entity request: {}",
@@ -252,24 +219,151 @@ impl ApiClient for KappaApkClient {
                 })?;
                 Python::with_gil(|py| json_value_to_pyobject(py, &json_data))
             } else {
-                let status = response.status();
-                let text = response.text().await.unwrap_or_default();
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
-                    && let Some(detail) = json.get("detail").and_then(|v| v.as_str())
-                {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        detail.to_string(),
-                    ));
-                }
-                Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    if text.is_empty() {
-                        format!("HTTP error: {}", status)
-                    } else {
-                        text
-                    },
-                ))
+                Err(http_error_to_pyerr(response.status(), response.text().await.unwrap_or_default()))
             }
         })
+    }
+
+    fn submit_multipart_files(
+        &self,
+        method: &str,
+        endpoint: String,
+        file_parts: Vec<(Vec<u8>, String)>,
+        token: Option<String>,
+    ) -> PyResult<PyObject> {
+        if file_parts.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "At least one file is required for multipart upload",
+            ));
+        }
+        let url = format!("{}{}", self.base_url, endpoint);
+        let http = self.client.clone();
+        let method_owned = method.to_uppercase();
+
+        self.runtime.block_on(async move {
+            let mut form = multipart::Form::new();
+            for (bytes, fname) in file_parts {
+                let part = multipart::Part::bytes(bytes)
+                    .file_name(fname)
+                    .mime_str("application/octet-stream")
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                    })?;
+                form = form.part("files", part);
+            }
+
+            let mut request = match method_owned.as_str() {
+                "POST" => http.post(&url).multipart(form),
+                "PUT" => http.put(&url).multipart(form),
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Unsupported method for multipart upload: {}",
+                        method_owned
+                    )));
+                }
+            };
+
+            request = request.header("accept", "application/json");
+            if let Some(ref t) = token {
+                request = request.header("Authorization", format!("Bearer {}", t));
+            }
+
+            let response = request.send().await.map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyConnectionError, _>(
+                    format!("Request failed: {}", e),
+                )
+            })?;
+
+            if response.status().is_success() {
+                let json_data: serde_json::Value = response.json().await.map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        format!("Failed to parse response: {}", e),
+                    )
+                })?;
+                Python::with_gil(|py| json_value_to_pyobject(py, &json_data))
+            } else {
+                Err(http_error_to_pyerr(response.status(), response.text().await.unwrap_or_default()))
+            }
+        })
+    }
+
+    fn submit_bulk_upload(
+        &self,
+        endpoint: String,
+        sources_json: String,
+        file_bytes: Vec<u8>,
+        file_name: String,
+        headers: Vec<(String, String)>,
+        token: Option<String>,
+    ) -> PyResult<PyObject> {
+        let url = format!("{}{}", self.base_url, endpoint);
+        let http = self.client.clone();
+
+        self.runtime.block_on(async move {
+            let file_part = multipart::Part::bytes(file_bytes)
+                .file_name(file_name)
+                .mime_str("application/octet-stream")
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                })?;
+            let form = multipart::Form::new()
+                .text("sources", sources_json)
+                .part("file", file_part);
+
+            let mut request = http.post(&url).multipart(form);
+            request = request.header("accept", "application/json");
+            if let Some(ref t) = token {
+                request = request.header("Authorization", format!("Bearer {}", t));
+            }
+            for (k, v) in headers {
+                request = request.header(k, v);
+            }
+
+            let response = request.send().await.map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyConnectionError, _>(
+                    format!("Request failed: {}", e),
+                )
+            })?;
+
+            if response.status().is_success() {
+                let json_data: serde_json::Value = response.json().await.map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        format!("Failed to parse response: {}", e),
+                    )
+                })?;
+                Python::with_gil(|py| json_value_to_pyobject(py, &json_data))
+            } else {
+                Err(http_error_to_pyerr(response.status(), response.text().await.unwrap_or_default()))
+            }
+        })
+    }
+}
+
+/// Map HTTP error bodies to Python exceptions, preserving status for 409 conflicts etc.
+fn http_error_to_pyerr(status: reqwest::StatusCode, text: String) -> PyErr {
+    let detail = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+        json.get("detail")
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    Some(s.to_string())
+                } else {
+                    Some(v.to_string())
+                }
+            })
+            .unwrap_or_else(|| text.clone())
+    } else {
+        text.clone()
+    };
+    let msg = if detail.is_empty() {
+        format!("HTTP {}", status)
+    } else {
+        format!("HTTP {}: {}", status, detail)
+    };
+    // 409 conflicts (e.g. dataset used in benchmarks, wrong dataset status)
+    if status.as_u16() == 409 {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(msg)
+    } else {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
     }
 }
 
@@ -297,10 +391,31 @@ fn encode_update_dataset_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
 }
 
 fn encode_new_entity_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
-    if let Ok(e) = v.extract::<PyRef<NewDatasetEntity>>() {
-        return e.to_api_json(v.py());
+    let json = if let Ok(e) = v.extract::<PyRef<NewDatasetEntity>>() {
+        e.to_api_json(v.py())?
+    } else {
+        py_json_dumps(v)?
+    };
+    validate_entity_labeling_algo_in_json(&json)?;
+    Ok(json)
+}
+
+/// Backend 2.9 rejects empty / `"none"` labelingAlgo on entity create.
+fn validate_entity_labeling_algo_in_json(json: &str) -> PyResult<()> {
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid entity JSON: {}", e))
+    })?;
+    let algo = value
+        .get("labelingAlgo")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if algo.is_empty() || algo.eq_ignore_ascii_case("none") {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "labelingAlgo is required and cannot be empty or 'none'",
+        ));
     }
-    py_json_dumps(v)
+    Ok(())
 }
 
 fn encode_update_entity_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
@@ -783,7 +898,7 @@ impl KappaApkClient {
 
     /// Soft-delete a dataset (sets `datasetStatus = 0`).
     ///
-    /// Deleted datasets can be recovered via the server's `/datasets/recover` endpoint.
+    /// Recover with [`Self::recover_datasets`].
     #[pyo3(signature = (dataset_id, remark=None))]
     pub fn delete_dataset(
         &self,
@@ -791,6 +906,16 @@ impl KappaApkClient {
         remark: Option<String>,
     ) -> PyResult<PyObject> {
         Datasets::delete_dataset(self, dataset_id, remark)
+    }
+
+    /// Recover soft-deleted datasets (`POST .../datasets/recover`).
+    pub fn recover_datasets(&self, dataset_ids: Vec<i32>) -> PyResult<PyObject> {
+        Datasets::recover_datasets(self, dataset_ids)
+    }
+
+    /// Check whether a dataset name is available (`GET .../nameAvailability`).
+    pub fn check_dataset_name_availability(&self, dataset_name: String) -> PyResult<PyObject> {
+        Datasets::check_dataset_name_availability(self, &dataset_name)
     }
 
     // --- label management ---
@@ -827,12 +952,27 @@ impl KappaApkClient {
     // --- entity read operations ---
 
     /// List all entities (samples) in a dataset version.
+    ///
+    /// .. deprecated::
+    ///    Backend unpaginated ``GET .../datasetEntities/{id}`` is deprecated (2.9).
+    ///    Prefer :meth:`filter_dataset_entities`.
     #[pyo3(signature = (dataset_id, version_id=None))]
     pub fn list_dataset_entities(
         &self,
         dataset_id: i32,
         version_id: Option<i32>,
     ) -> PyResult<PyObject> {
+        Python::with_gil(|py| -> PyResult<()> {
+            let warnings = py.import("warnings")?;
+            warnings.call_method1(
+                "warn",
+                (
+                    "list_dataset_entities uses a deprecated unpaginated API; prefer filter_dataset_entities",
+                    py.import("builtins")?.getattr("DeprecationWarning")?,
+                ),
+            )?;
+            Ok(())
+        })?;
         Datasets::list_dataset_entities(self, dataset_id, version_id)
     }
 
@@ -878,6 +1018,123 @@ impl KappaApkClient {
         version_id: Option<i32>,
     ) -> PyResult<PyObject> {
         Datasets::delete_dataset_entities(self, dataset_entity_ids, remark, version_id)
+    }
+
+    /// Recover soft-deleted entities (`POST .../datasetEntities/recover`).
+    #[pyo3(signature = (dataset_entity_ids, version_id=None))]
+    pub fn recover_dataset_entities(
+        &self,
+        dataset_entity_ids: Vec<String>,
+        version_id: Option<i32>,
+    ) -> PyResult<PyObject> {
+        Datasets::recover_dataset_entities(self, dataset_entity_ids, version_id)
+    }
+
+    /// Upload additional files onto an existing entity.
+    ///
+    /// `file_category`: ``"input"`` (default) or ``"output"``.
+    #[pyo3(signature = (dataset_id, entity_id, file_paths, file_category=None))]
+    pub fn upload_dataset_entity_files(
+        &self,
+        dataset_id: i32,
+        entity_id: String,
+        file_paths: Vec<String>,
+        file_category: Option<String>,
+    ) -> PyResult<PyObject> {
+        Datasets::upload_dataset_entity_files(
+            self,
+            dataset_id,
+            &entity_id,
+            file_paths,
+            file_category,
+        )
+    }
+
+    /// Soft-delete entity files by file ID list.
+    pub fn delete_dataset_entity_files(
+        &self,
+        entity_file_ids: Vec<String>,
+    ) -> PyResult<PyObject> {
+        Datasets::delete_dataset_entity_files(self, entity_file_ids)
+    }
+
+    /// Start an async bulk entity upload (`archive` zip or `csv`).
+    #[pyo3(signature = (dataset_id, file_path, upload_type, labeling_algo, source=None, dataset_schema=None, bulk_split=None, strict=true, idempotency_key=None))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn bulk_upload_dataset_entities(
+        &self,
+        dataset_id: i32,
+        file_path: String,
+        upload_type: String,
+        labeling_algo: String,
+        source: Option<String>,
+        dataset_schema: Option<&Bound<'_, PyAny>>,
+        bulk_split: Option<String>,
+        strict: bool,
+        idempotency_key: Option<String>,
+    ) -> PyResult<PyObject> {
+        let schema = match dataset_schema {
+            Some(v) => {
+                let s = py_json_dumps(v)?;
+                Some(serde_json::from_str(&s).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "dataset_schema must be JSON-serializable: {}",
+                        e
+                    ))
+                })?)
+            }
+            None => None,
+        };
+        Datasets::bulk_upload_dataset_entities(
+            self,
+            dataset_id,
+            &file_path,
+            &upload_type,
+            &labeling_algo,
+            source,
+            schema,
+            bulk_split,
+            strict,
+            idempotency_key,
+        )
+    }
+
+    /// Get bulk upload job status.
+    pub fn get_bulk_upload_job(&self, dataset_id: i32, job_id: String) -> PyResult<PyObject> {
+        Datasets::get_bulk_upload_job(self, dataset_id, &job_id)
+    }
+
+    /// List bulk upload jobs for a dataset.
+    pub fn list_bulk_upload_jobs(&self, dataset_id: i32) -> PyResult<PyObject> {
+        Datasets::list_bulk_upload_jobs(self, dataset_id)
+    }
+
+    /// Cancel a bulk upload job.
+    pub fn cancel_bulk_upload_job(&self, dataset_id: i32, job_id: String) -> PyResult<PyObject> {
+        Datasets::cancel_bulk_upload_job(self, dataset_id, &job_id)
+    }
+
+    /// Cancel stale bulk upload jobs for a dataset.
+    pub fn cancel_stale_bulk_upload_jobs(&self, dataset_id: i32) -> PyResult<PyObject> {
+        Datasets::cancel_stale_bulk_upload_jobs(self, dataset_id)
+    }
+
+    /// Poll until bulk upload job finishes or times out.
+    #[pyo3(signature = (dataset_id, job_id, poll_interval_secs=None, timeout_secs=None))]
+    pub fn wait_for_bulk_upload_job(
+        &self,
+        dataset_id: i32,
+        job_id: String,
+        poll_interval_secs: Option<f64>,
+        timeout_secs: Option<f64>,
+    ) -> PyResult<PyObject> {
+        Datasets::wait_for_bulk_upload_job(
+            self,
+            dataset_id,
+            &job_id,
+            poll_interval_secs,
+            timeout_secs,
+        )
     }
 
     // --- dataset version management ---
@@ -929,5 +1186,218 @@ impl KappaApkClient {
             let myself = Py::new(py, self.clone())?;
             Py::new(py, Benchmarks::new(benchmark_id, myself))
         })
+    }
+
+    // --- model registry (no card / no publish) ---
+
+    #[pyo3(signature = (page=None, size=None, search=None))]
+    pub fn filter_models(
+        &self,
+        page: Option<i32>,
+        size: Option<i32>,
+        search: Option<String>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::filter_models(self, page, size, search)
+    }
+
+    pub fn get_model(&self, model_id: String) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::get_model(self, &model_id)
+    }
+
+    pub fn create_model(&self, model: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::create_model(self, py_json_dumps(model)?)
+    }
+
+    pub fn update_model(&self, model_id: String, update: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::update_model(self, &model_id, py_json_dumps(update)?)
+    }
+
+    #[pyo3(signature = (model_id, remark=None))]
+    pub fn delete_model(&self, model_id: String, remark: Option<String>) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::delete_model(self, &model_id, remark)
+    }
+
+    pub fn get_model_history(&self, model_id: String) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::get_model_history(self, &model_id)
+    }
+
+    pub fn create_model_version(
+        &self,
+        model_id: String,
+        version: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::create_model_version(self, &model_id, py_json_dumps(version)?)
+    }
+
+    pub fn list_model_versions(&self, model_id: String) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::list_model_versions(self, &model_id)
+    }
+
+    pub fn get_model_version(&self, model_id: String, version_id: i32) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::get_model_version(self, &model_id, version_id)
+    }
+
+    pub fn update_model_version(
+        &self,
+        model_id: String,
+        version_id: i32,
+        update: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::update_model_version(
+            self,
+            &model_id,
+            version_id,
+            py_json_dumps(update)?,
+        )
+    }
+
+    pub fn delete_model_version(&self, model_id: String, version_id: i32) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::delete_model_version(self, &model_id, version_id)
+    }
+
+    pub fn create_model_inference(
+        &self,
+        model_id: String,
+        inference: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::create_model_inference(
+            self,
+            &model_id,
+            py_json_dumps(inference)?,
+        )
+    }
+
+    pub fn list_model_inferences(&self, model_id: String) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::list_model_inferences(self, &model_id)
+    }
+
+    pub fn update_model_inference(
+        &self,
+        model_id: String,
+        inference_id: i32,
+        update: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::update_model_inference(
+            self,
+            &model_id,
+            inference_id,
+            py_json_dumps(update)?,
+        )
+    }
+
+    pub fn get_model_inference_schema(&self, model_id: String) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::get_model_inference_schema(self, &model_id)
+    }
+
+    pub fn update_model_inference_schema(
+        &self,
+        model_id: String,
+        schema: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::update_model_inference_schema(
+            self,
+            &model_id,
+            py_json_dumps(schema)?,
+        )
+    }
+
+    pub fn delete_model_inference_schema(&self, model_id: String) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::delete_model_inference_schema(self, &model_id)
+    }
+
+    pub fn validate_inference_result(
+        &self,
+        model_id: String,
+        inference_result: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::validate_inference_result(
+            self,
+            &model_id,
+            py_json_dumps(inference_result)?,
+        )
+    }
+
+    pub fn list_inference_metrics(&self) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::list_inference_metrics(self)
+    }
+
+    pub fn list_inference_schema_types(&self) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::list_inference_schema_types(self)
+    }
+
+    pub fn list_model_pipelines(&self, model_id: String) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::list_model_pipelines(self, &model_id)
+    }
+
+    pub fn create_model_pipeline(
+        &self,
+        model_id: String,
+        version_id: i32,
+        pipeline: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::create_model_pipeline(
+            self,
+            &model_id,
+            version_id,
+            py_json_dumps(pipeline)?,
+        )
+    }
+
+    pub fn get_model_pipeline(&self, model_id: String, version_id: i32) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::get_model_pipeline(self, &model_id, version_id)
+    }
+
+    pub fn update_model_pipeline(
+        &self,
+        model_id: String,
+        version_id: i32,
+        pipeline: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::update_model_pipeline(
+            self,
+            &model_id,
+            version_id,
+            py_json_dumps(pipeline)?,
+        )
+    }
+
+    pub fn delete_model_pipeline(&self, model_id: String, version_id: i32) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::delete_model_pipeline(self, &model_id, version_id)
+    }
+
+    pub fn validate_model_pipeline(&self, model_id: String, version_id: i32) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::validate_model_pipeline(self, &model_id, version_id)
+    }
+
+    pub fn list_benchmarks(&self) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::list_benchmarks(self)
+    }
+
+    pub fn create_benchmark(&self, benchmark: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::create_benchmark(self, py_json_dumps(benchmark)?)
+    }
+
+    pub fn update_benchmark(
+        &self,
+        benchmark_id: String,
+        update: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::update_benchmark(self, &benchmark_id, py_json_dumps(update)?)
+    }
+
+    pub fn delete_benchmark(&self, benchmark_id: String) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::delete_benchmark(self, &benchmark_id)
+    }
+
+    pub fn complete_benchmark_inference(
+        &self,
+        benchmark_id: String,
+        model_version_id: i32,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::complete_benchmark_inference(
+            self,
+            &benchmark_id,
+            model_version_id,
+        )
     }
 }

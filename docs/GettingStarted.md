@@ -8,6 +8,12 @@
 pip install kf-sdk
 ```
 
+Then import the module (name differs from the PyPI package on purpose):
+
+```python
+import kappa_apk
+```
+
 Wheels are published for **Linux (manylinux)**, **macOS** (Intel + Apple Silicon), and **Windows**, Python **3.9–3.13**.
 
 ### From source (development)

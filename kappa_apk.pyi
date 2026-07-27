@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Iterator, Optional
 
 def version() -> str:
-    """Return the kf-sdk library version string."""
+    """Return the library version string (kf-sdk / kappa_apk)."""
     ...
 
 # ---------------------------------------------------------------------------
@@ -328,13 +328,11 @@ class Benchmarks:
         """
         ...
 
-    def submit_benchmark(self) -> dict[str, Any]:
+    def submit_benchmark(self, strict: bool = True) -> dict[str, Any]:
         """Submit the saved benchmark result to the model service.
 
-        Requires :meth:`save_benchmark` to have been called first.
-
-        Returns:
-            The server response as a dict.
+        Requires :meth:`save_benchmark` first. When *strict* is True (default),
+        validates against the model inference schema before POST.
         """
         ...
 
@@ -766,8 +764,16 @@ class KappaApkClient:
     ) -> dict[str, Any]:
         """Soft-delete a dataset (sets ``datasetStatus = 0``).
 
-        Deleted datasets can be recovered server-side via ``/datasets/recover``.
+        Recover with :meth:`recover_datasets`.
         """
+        ...
+
+    def recover_datasets(self, dataset_ids: list[int]) -> dict[str, Any]:
+        """Recover soft-deleted datasets (``POST .../datasets/recover``)."""
+        ...
+
+    def check_dataset_name_availability(self, dataset_name: str) -> dict[str, Any]:
+        """Check dataset name uniqueness (``GET .../nameAvailability``)."""
         ...
 
     # --- label management ---
@@ -804,7 +810,10 @@ class KappaApkClient:
         dataset_id: int,
         version_id: Optional[int] = None,
     ) -> dict[str, Any]:
-        """List all entities (samples) in a dataset version."""
+        """List all entities (samples) in a dataset version.
+
+        Deprecated: unpaginated backend route. Prefer :meth:`filter_dataset_entities`.
+        """
         ...
 
     def get_dataset_entity(
@@ -837,6 +846,60 @@ class KappaApkClient:
         version_id: Optional[int] = None,
     ) -> dict[str, Any]:
         """Bulk soft-delete entities by their string IDs."""
+        ...
+
+    def recover_dataset_entities(
+        self,
+        dataset_entity_ids: list[str],
+        version_id: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Recover soft-deleted entities (``POST .../datasetEntities/recover``)."""
+        ...
+
+    def upload_dataset_entity_files(
+        self,
+        dataset_id: int,
+        entity_id: str,
+        file_paths: list[str],
+        file_category: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Upload files onto an existing entity (``file_category``: input|output)."""
+        ...
+
+    def delete_dataset_entity_files(
+        self,
+        entity_file_ids: list[str],
+    ) -> dict[str, Any]:
+        """Soft-delete entity files by file ID list."""
+        ...
+
+    def bulk_upload_dataset_entities(
+        self,
+        dataset_id: int,
+        file_path: str,
+        upload_type: str,
+        labeling_algo: str,
+        source: Optional[str] = None,
+        dataset_schema: Optional[Any] = None,
+        bulk_split: Optional[str] = None,
+        strict: bool = True,
+        idempotency_key: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Start async bulk upload (``upload_type``: archive|csv)."""
+        ...
+
+    def get_bulk_upload_job(self, dataset_id: int, job_id: str) -> dict[str, Any]: ...
+    def list_bulk_upload_jobs(self, dataset_id: int) -> dict[str, Any]: ...
+    def cancel_bulk_upload_job(self, dataset_id: int, job_id: str) -> dict[str, Any]: ...
+    def cancel_stale_bulk_upload_jobs(self, dataset_id: int) -> dict[str, Any]: ...
+    def wait_for_bulk_upload_job(
+        self,
+        dataset_id: int,
+        job_id: str,
+        poll_interval_secs: Optional[float] = None,
+        timeout_secs: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Poll until bulk job reaches a terminal status or times out."""
         ...
 
     # --- dataset version management ---
@@ -885,6 +948,50 @@ class KappaApkClient:
     def load_benchmark(self, benchmark_id: str) -> Benchmarks:
         """Load a :class:`Benchmarks` handle for the given benchmark ID."""
         ...
+
+    # --- model registry (no card / no publish) ---
+
+    def filter_models(
+        self,
+        page: Optional[int] = None,
+        size: Optional[int] = None,
+        search: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    def get_model(self, model_id: str) -> dict[str, Any]: ...
+    def create_model(self, model: Any) -> dict[str, Any]: ...
+    def update_model(self, model_id: str, update: Any) -> dict[str, Any]: ...
+    def delete_model(self, model_id: str, remark: Optional[str] = None) -> dict[str, Any]: ...
+    def get_model_history(self, model_id: str) -> dict[str, Any]: ...
+
+    def create_model_version(self, model_id: str, version: Any) -> dict[str, Any]: ...
+    def list_model_versions(self, model_id: str) -> dict[str, Any]: ...
+    def get_model_version(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+    def update_model_version(self, model_id: str, version_id: int, update: Any) -> dict[str, Any]: ...
+    def delete_model_version(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+
+    def create_model_inference(self, model_id: str, inference: Any) -> dict[str, Any]: ...
+    def list_model_inferences(self, model_id: str) -> dict[str, Any]: ...
+    def update_model_inference(self, model_id: str, inference_id: int, update: Any) -> dict[str, Any]: ...
+
+    def get_model_inference_schema(self, model_id: str) -> dict[str, Any]: ...
+    def update_model_inference_schema(self, model_id: str, schema: Any) -> dict[str, Any]: ...
+    def delete_model_inference_schema(self, model_id: str) -> dict[str, Any]: ...
+    def validate_inference_result(self, model_id: str, inference_result: Any) -> dict[str, Any]: ...
+    def list_inference_metrics(self) -> dict[str, Any]: ...
+    def list_inference_schema_types(self) -> dict[str, Any]: ...
+
+    def list_model_pipelines(self, model_id: str) -> dict[str, Any]: ...
+    def create_model_pipeline(self, model_id: str, version_id: int, pipeline: Any) -> dict[str, Any]: ...
+    def get_model_pipeline(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+    def update_model_pipeline(self, model_id: str, version_id: int, pipeline: Any) -> dict[str, Any]: ...
+    def delete_model_pipeline(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+    def validate_model_pipeline(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+
+    def list_benchmarks(self) -> dict[str, Any]: ...
+    def create_benchmark(self, benchmark: Any) -> dict[str, Any]: ...
+    def update_benchmark(self, benchmark_id: str, update: Any) -> dict[str, Any]: ...
+    def delete_benchmark(self, benchmark_id: str) -> dict[str, Any]: ...
+    def complete_benchmark_inference(self, benchmark_id: str, model_version_id: int) -> dict[str, Any]: ...
 
     # --- raw HTTP ---
 

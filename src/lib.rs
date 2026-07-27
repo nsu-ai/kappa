@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 mod client;
 mod traits;
 mod models;
+mod models_api;
 mod users;
 mod benchmarks;
 mod utils;
@@ -31,7 +32,7 @@ use models::users_model::{OrgDetails, User, UserTypeDetails};
 pub use traits::*;
 use crate::benchmarks::verifications::BenchmarkVerification;
 
-/// Returns the version of the kf-sdk library.
+/// Returns the version of the kf-sdk / kappa_apk library.
 #[pyfunction]
 fn version() -> PyResult<String> {
     Ok(env!("CARGO_PKG_VERSION").to_string())

@@ -1,7 +1,9 @@
-# Документация SDK kf-sdk
+# Документация SDK (`kf-sdk` / `kappa_apk`)
 
-> **Пакет:** `kf-sdk` (PyPI) · **Импорт:** `kappa_apk` · **Версия:** 3.0.1 · **Ветка:** `main`  
+> **PyPI:** `kf-sdk` · **Импорт:** `kappa_apk` · **Версия:** 3.0.1 · **Ветка:** `main`  
 > **Python:** 3.9+ · **API:** Kappa-framework **v2** (идентификация по JWT — без `user_id` / `user_type_id` в URL)
+>
+> Имя дистрибутива на PyPI **`kf-sdk`** сохранено для совместимости с ранними релизами; модуль импорта намеренно **`kappa_apk`**.
 
 Python-клиент для ML-платформы [Kappa-framework](https://github.com/nsu-ai/kappa). Реализован на Rust + [PyO3](https://pyo3.rs); HTTP-запросы идут через **шлюз Traefik** по адресу `base_url`.
 
