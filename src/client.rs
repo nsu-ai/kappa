@@ -337,6 +337,97 @@ impl ApiClient for KappaApkClient {
             }
         })
     }
+
+    fn download_bytes(&self, endpoint: String, token: Option<String>) -> PyResult<Vec<u8>> {
+        let url = format!("{}{}", self.base_url, endpoint);
+        let http = self.client.clone();
+        self.runtime.block_on(async move {
+            let mut request = http.get(&url).header("accept", "*/*");
+            if let Some(ref t) = token {
+                request = request.header("Authorization", format!("Bearer {}", t));
+            }
+            let response = request.send().await.map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
+                    "Download failed: {}",
+                    e
+                ))
+            })?;
+            if response.status().is_success() {
+                response.bytes().await.map(|b| b.to_vec()).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to read download body: {}",
+                        e
+                    ))
+                })
+            } else {
+                Err(http_error_to_pyerr(
+                    response.status(),
+                    response.text().await.unwrap_or_default(),
+                ))
+            }
+        })
+    }
+
+    fn submit_named_file(
+        &self,
+        method: &str,
+        endpoint: String,
+        field_name: &str,
+        file_bytes: Vec<u8>,
+        file_name: String,
+        token: Option<String>,
+    ) -> PyResult<PyObject> {
+        let url = format!("{}{}", self.base_url, endpoint);
+        let http = self.client.clone();
+        let method_owned = method.to_uppercase();
+        let field = field_name.to_string();
+
+        self.runtime.block_on(async move {
+            let part = multipart::Part::bytes(file_bytes)
+                .file_name(file_name)
+                .mime_str("application/octet-stream")
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            let form = multipart::Form::new().part(field, part);
+
+            let mut request = match method_owned.as_str() {
+                "POST" => http.post(&url).multipart(form),
+                "PUT" => http.put(&url).multipart(form),
+                "PATCH" => http.patch(&url).multipart(form),
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Unsupported method for named file upload: {}",
+                        method_owned
+                    )));
+                }
+            };
+            request = request.header("accept", "application/json");
+            if let Some(ref t) = token {
+                request = request.header("Authorization", format!("Bearer {}", t));
+            }
+
+            let response = request.send().await.map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
+                    "Request failed: {}",
+                    e
+                ))
+            })?;
+
+            if response.status().is_success() {
+                let json_data: serde_json::Value = response.json().await.map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to parse response: {}",
+                        e
+                    ))
+                })?;
+                Python::with_gil(|py| json_value_to_pyobject(py, &json_data))
+            } else {
+                Err(http_error_to_pyerr(
+                    response.status(),
+                    response.text().await.unwrap_or_default(),
+                ))
+            }
+        })
+    }
 }
 
 /// Map HTTP error bodies to Python exceptions, preserving status for 409 conflicts etc.
@@ -724,7 +815,10 @@ impl KappaApkClient {
     }
 
     /// Load a dataset version into a `KappaDataset` instance.
-    #[pyo3(signature = (dataset_id=None, dataset_name=None, version_id=None, version_no=None, dataset_path=None, transform=None, target_transform=None, transform_input_mode=None))]
+    ///
+    /// `splits`: optional list of split names to keep (e.g. `["train"]`). Missing
+    /// `entity_info.split` is treated as `"train"`.
+    #[pyo3(signature = (dataset_id=None, dataset_name=None, version_id=None, version_no=None, dataset_path=None, transform=None, target_transform=None, transform_input_mode=None, splits=None))]
     pub fn load_kappa_dataset(
         &self,
         dataset_id: Option<i32>,
@@ -735,6 +829,7 @@ impl KappaApkClient {
         transform: Option<Py<PyAny>>,
         target_transform: Option<Py<PyAny>>,
         transform_input_mode: Option<String>,
+        splits: Option<Vec<String>>,
     ) -> PyResult<Py<KappaDataset>> {
         let transform_input_mode = transform_input_mode.unwrap_or_else(|| "content".to_string());
         Datasets::load_kappa_dataset(
@@ -747,10 +842,13 @@ impl KappaApkClient {
             transform,
             target_transform,
             transform_input_mode,
+            splits,
         )
     }
 
     /// Get a dataset loader in the requested format (`"kappa"`, `"pytorch"`, `"transformers"`, `"tensorflow"`).
+    ///
+    /// `splits`: optional list of split names to keep (see [`Self::load_kappa_dataset`]).
     #[pyo3(signature = (
         dataset_id=None,
         dataset_name=None,
@@ -764,7 +862,8 @@ impl KappaApkClient {
         tf_output_signature=None,
         transform=None,
         target_transform=None,
-        transform_input_mode=None
+        transform_input_mode=None,
+        splits=None
     ))]
     pub fn get_dataset_loader(
         &self,
@@ -781,6 +880,7 @@ impl KappaApkClient {
         transform: Option<Py<PyAny>>,
         target_transform: Option<Py<PyAny>>,
         transform_input_mode: Option<String>,
+        splits: Option<Vec<String>>,
     ) -> PyResult<PyObject> {
         let transform_input_mode = transform_input_mode.unwrap_or_else(|| "content".to_string());
         Datasets::get_dataset_loader(
@@ -798,6 +898,7 @@ impl KappaApkClient {
             transform,
             target_transform,
             transform_input_mode,
+            splits,
         )
     }
 
@@ -819,12 +920,18 @@ impl KappaApkClient {
     }
 
     /// Add a dataset entity with optional file attachments.
-    #[pyo3(signature = (dataset_id, entity, file_paths=None))]
+    ///
+    /// `file_category`: ``"input"`` (default) or ``"output"`` when attaching files — builds
+    /// `filesCategory` for resolved filenames unless the entity already sets it.
+    /// `split`: optional train/validation/test (or schema-allowed) value for `dsEntityInfo.split`.
+    #[pyo3(signature = (dataset_id, entity, file_paths=None, file_category=None, split=None))]
     pub fn add_dataset_entity(
         &self,
         dataset_id: i32,
         entity: &Bound<'_, PyAny>,
         file_paths: Option<Vec<String>>,
+        file_category: Option<String>,
+        split: Option<String>,
     ) -> PyResult<PyObject> {
         let entity_json = encode_new_entity_payload(entity)?;
         Datasets::add_dataset_entity(
@@ -832,17 +939,23 @@ impl KappaApkClient {
             dataset_id,
             entity_json,
             file_paths.unwrap_or_default(),
+            file_category,
+            split,
         )
     }
 
     /// Update a dataset entity with optional file attachments.
-    #[pyo3(signature = (dataset_id, entity_id, update, file_paths=None))]
+    ///
+    /// See [`Self::add_dataset_entity`] for `file_category` / `split`.
+    #[pyo3(signature = (dataset_id, entity_id, update, file_paths=None, file_category=None, split=None))]
     pub fn update_dataset_entity(
         &self,
         dataset_id: i32,
         entity_id: String,
         update: &Bound<'_, PyAny>,
         file_paths: Option<Vec<String>>,
+        file_category: Option<String>,
+        split: Option<String>,
     ) -> PyResult<PyObject> {
         let update_json = encode_update_entity_payload(update)?;
         Datasets::update_dataset_entity(
@@ -851,6 +964,8 @@ impl KappaApkClient {
             &entity_id,
             update_json,
             file_paths.unwrap_or_default(),
+            file_category,
+            split,
         )
     }
 
@@ -868,6 +983,7 @@ impl KappaApkClient {
     ///
     /// All parameters are optional; omit any you don't need.
     /// `dataset_tags` is a comma-separated tag string (e.g. `"vision,classification"`).
+    /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
     #[pyo3(signature = (search=None, dataset_id=None, dataset_name=None, dataset_type=None, dataset_tags=None, dataset_status=None, publish_type=None, page=None, size=None, order_by=None, order_keyword=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn filter_datasets(
@@ -1170,7 +1286,7 @@ impl KappaApkClient {
 
     /// Publish a dataset version.
     ///
-    /// `publish_type`: 0 = Private, 1 = Internal, 2 = Public.
+    /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
     pub fn publish_dataset_version(
         &self,
         dataset_id: i32,
@@ -1178,6 +1294,130 @@ impl KappaApkClient {
         publish_type: i32,
     ) -> PyResult<PyObject> {
         Datasets::publish_dataset_version(self, dataset_id, &version_no, publish_type)
+    }
+
+    /// Recover a soft-deleted dataset version.
+    pub fn recover_dataset_version(
+        &self,
+        dataset_id: i32,
+        version_no: String,
+    ) -> PyResult<PyObject> {
+        Datasets::recover_dataset_version(self, dataset_id, &version_no)
+    }
+
+    /// Rebuild the archive for a dataset version after entity changes.
+    pub fn refresh_dataset_version(
+        &self,
+        dataset_id: i32,
+        version_no: String,
+    ) -> PyResult<PyObject> {
+        Datasets::refresh_dataset_version(self, dataset_id, &version_no)
+    }
+
+    /// Retry a bulk upload job (`POST …/bulk/jobs/{id}/retry`).
+    #[pyo3(signature = (dataset_id, job_id, sources=None))]
+    pub fn retry_bulk_upload_job(
+        &self,
+        dataset_id: i32,
+        job_id: String,
+        sources: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyObject> {
+        let body = match sources {
+            Some(s) => py_json_dumps(s)?,
+            None => "{}".to_string(),
+        };
+        Datasets::retry_bulk_upload_job(self, dataset_id, &job_id, body)
+    }
+
+    /// Mark default-algorithm entities as labeled without an external labeling job.
+    #[pyo3(signature = (dataset_id, dataset_entity_ids, remark=None))]
+    pub fn mark_dataset_entities_labeled(
+        &self,
+        dataset_id: i32,
+        dataset_entity_ids: Vec<String>,
+        remark: Option<String>,
+    ) -> PyResult<PyObject> {
+        Datasets::mark_dataset_entities_labeled(self, dataset_id, dataset_entity_ids, remark)
+    }
+
+    /// Download an entity file to `dest_path`.
+    #[pyo3(signature = (dataset_id, file_id, dest_path, as_attachment=false))]
+    pub fn download_dataset_entity_file(
+        &self,
+        dataset_id: i32,
+        file_id: String,
+        dest_path: String,
+        as_attachment: bool,
+    ) -> PyResult<String> {
+        Datasets::download_dataset_entity_file(
+            self,
+            dataset_id,
+            &file_id,
+            &dest_path,
+            as_attachment,
+        )
+    }
+
+    // --- tabular custom schema ---
+
+    #[pyo3(signature = (dataset_id, schema_kind=None))]
+    pub fn get_dataset_custom_schema(
+        &self,
+        dataset_id: i32,
+        schema_kind: Option<String>,
+    ) -> PyResult<PyObject> {
+        Datasets::get_dataset_custom_schema(self, dataset_id, schema_kind)
+    }
+
+    pub fn put_dataset_custom_schema(
+        &self,
+        dataset_id: i32,
+        schema: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        Datasets::put_dataset_custom_schema(self, dataset_id, py_json_dumps(schema)?)
+    }
+
+    #[pyo3(signature = (dataset_id, schema_kind=None))]
+    pub fn lock_dataset_custom_schema(
+        &self,
+        dataset_id: i32,
+        schema_kind: Option<String>,
+    ) -> PyResult<PyObject> {
+        Datasets::lock_dataset_custom_schema(self, dataset_id, schema_kind)
+    }
+
+    #[pyo3(signature = (dataset_id, schema_kind=None))]
+    pub fn unlock_dataset_custom_schema(
+        &self,
+        dataset_id: i32,
+        schema_kind: Option<String>,
+    ) -> PyResult<PyObject> {
+        Datasets::unlock_dataset_custom_schema(self, dataset_id, schema_kind)
+    }
+
+    #[pyo3(signature = (dataset_id, csv_content, sample_rows=None))]
+    pub fn infer_dataset_custom_schema(
+        &self,
+        dataset_id: i32,
+        csv_content: String,
+        sample_rows: Option<i32>,
+    ) -> PyResult<PyObject> {
+        Datasets::infer_dataset_custom_schema(self, dataset_id, csv_content, sample_rows)
+    }
+
+    #[pyo3(signature = (dataset_id, column, schema_kind=None))]
+    pub fn add_dataset_custom_schema_column(
+        &self,
+        dataset_id: i32,
+        column: &Bound<'_, PyAny>,
+        schema_kind: Option<String>,
+    ) -> PyResult<PyObject> {
+        Datasets::add_dataset_custom_schema_column(
+            self,
+            dataset_id,
+            py_json_dumps(column)?,
+            schema_kind,
+        )
     }
 
     /// Load a benchmark and return a reusable `Benchmarks` object.
@@ -1285,6 +1525,65 @@ impl KappaApkClient {
         )
     }
 
+    /// Upload an inference artifact file.
+    ///
+    /// `file_category`: 1 Training, 2 Inference (default), 3 Model, 4 Data, 5 Other.
+    /// Set `replace=True` to PATCH an existing artifact.
+    #[pyo3(signature = (model_id, inference_id, file_path, file_category=None, replace=false))]
+    pub fn upload_model_inference_file(
+        &self,
+        model_id: String,
+        inference_id: i32,
+        file_path: String,
+        file_category: Option<i32>,
+        replace: bool,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::upload_model_inference_file(
+            self,
+            &model_id,
+            inference_id,
+            &file_path,
+            file_category,
+            replace,
+        )
+    }
+
+    pub fn download_model_inference_artifacts(
+        &self,
+        model_id: String,
+        inference_id: i32,
+        dest_path: String,
+    ) -> PyResult<String> {
+        crate::models_api::ModelsApi::download_model_inference_artifacts(
+            self,
+            &model_id,
+            inference_id,
+            &dest_path,
+        )
+    }
+
+    pub fn download_model_version_artifacts(
+        &self,
+        model_id: String,
+        version_id: i32,
+        dest_path: String,
+    ) -> PyResult<String> {
+        crate::models_api::ModelsApi::download_model_version_artifacts(
+            self,
+            &model_id,
+            version_id,
+            &dest_path,
+        )
+    }
+
+    pub fn get_model_version_inference(
+        &self,
+        model_id: String,
+        version_id: i32,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::get_model_version_inference(self, &model_id, version_id)
+    }
+
     pub fn get_model_inference_schema(&self, model_id: String) -> PyResult<PyObject> {
         crate::models_api::ModelsApi::get_model_inference_schema(self, &model_id)
     }
@@ -1323,6 +1622,19 @@ impl KappaApkClient {
 
     pub fn list_inference_schema_types(&self) -> PyResult<PyObject> {
         crate::models_api::ModelsApi::list_inference_schema_types(self)
+    }
+
+    #[pyo3(signature = (model_id, limit=None))]
+    pub fn get_model_inference_schema_history(
+        &self,
+        model_id: String,
+        limit: Option<i32>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::get_model_inference_schema_history(self, &model_id, limit)
+    }
+
+    pub fn get_inference_schema_type(&self, model_type: i32) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::get_inference_schema_type(self, model_type)
     }
 
     pub fn list_model_pipelines(&self, model_id: String) -> PyResult<PyObject> {

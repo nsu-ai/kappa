@@ -33,6 +33,12 @@ class DatasetItem:
     def files(self) -> Optional[list[ItemFile]]: ...
     @property
     def annotations(self) -> Optional[list[dict[str, Any]]]: ...
+    @property
+    def entity_info(self) -> Optional[dict[str, Any]]: ...
+    @property
+    def split(self) -> str:
+        """``dsEntityInfo.split``; defaults to ``\"train\"`` when absent."""
+        ...
 
 class Dataset:
     """Dataset metadata record returned by listing / lookup calls."""
@@ -57,7 +63,7 @@ class Dataset:
     def dataset_tags(self) -> str: ...
     @property
     def publish_type(self) -> int:
-        """0 = Private, 1 = Internal, 2 = Public."""
+        """0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase."""
         ...
     @property
     def created_on(self) -> str: ...
@@ -415,6 +421,7 @@ class NewDatasetEntity:
     ds_entity_info: Any
     location_id: Optional[int]
     files_category: Optional[Any]
+    split: Optional[str]
 
     def __init__(
         self,
@@ -427,6 +434,7 @@ class NewDatasetEntity:
         entity_source: Optional[str] = None,
         location_id: Optional[int] = None,
         files_category: Optional[Any] = None,
+        split: Optional[str] = None,
     ) -> None: ...
 
     def to_api_json(self) -> str: ...
@@ -445,6 +453,7 @@ class UpdateDatasetEntity:
     version_id: int
     update_latest_entity: bool
     remark: str
+    split: Optional[str]
 
     def __init__(
         self,
@@ -459,6 +468,7 @@ class UpdateDatasetEntity:
         files_category: Optional[Any] = None,
         version_id: int = 0,
         update_latest_entity: bool = False,
+        split: Optional[str] = None,
     ) -> None: ...
 
     def to_api_json(self) -> str: ...
@@ -660,8 +670,13 @@ class KappaApkClient:
         transform: Optional[Any] = None,
         target_transform: Optional[Any] = None,
         transform_input_mode: Optional[str] = None,
+        splits: Optional[list[str]] = None,
     ) -> KappaDataset:
-        """Download a dataset version and wrap it as a :class:`KappaDataset`."""
+        """Download a dataset version and wrap it as a :class:`KappaDataset`.
+
+        *splits*: keep only entities whose ``split`` is in this list
+        (missing split counts as ``\"train\"``).
+        """
         ...
 
     def get_dataset_loader(
@@ -679,6 +694,7 @@ class KappaApkClient:
         transform: Optional[Any] = None,
         target_transform: Optional[Any] = None,
         transform_input_mode: Optional[str] = None,
+        splits: Optional[list[str]] = None,
     ) -> Any:
         """Return a data loader for the requested framework.
 
@@ -688,6 +704,8 @@ class KappaApkClient:
         * ``"pytorch"`` — ``torch.utils.data.DataLoader``
         * ``"transformers"`` — HuggingFace Datasets / ``default_data_collator``
         * ``"tensorflow"`` — ``tf.data.Dataset`` (requires *tf_output_signature*)
+
+        *splits*: optional filter by ``entity_info.split`` (see :meth:`load_kappa_dataset`).
         """
         ...
 
@@ -706,11 +724,16 @@ class KappaApkClient:
         dataset_id: int,
         entity: Any,
         file_paths: Optional[list[str]] = None,
+        file_category: Optional[str] = None,
+        split: Optional[str] = None,
     ) -> dict[str, Any]:
         """Add a labelled entity to a dataset with optional file attachments.
 
         *file_paths* entries may be local file paths, local directory paths
         (immediate children only), or ``http://`` / ``https://`` URLs.
+        *file_category*: ``\"input\"`` (default) or ``\"output\"`` — builds
+        ``filesCategory`` for resolved filenames when attaching files.
+        *split*: optional value for ``dsEntityInfo.split`` (e.g. train/validation/test).
         """
         ...
 
@@ -720,6 +743,8 @@ class KappaApkClient:
         entity_id: str,
         update: Any,
         file_paths: Optional[list[str]] = None,
+        file_category: Optional[str] = None,
+        split: Optional[str] = None,
     ) -> dict[str, Any]: ...
 
     # --- dataset lookup ---
@@ -749,7 +774,7 @@ class KappaApkClient:
         """Filter datasets with rich query params.
 
         *dataset_tags* is a comma-separated string, e.g. ``"vision,classification"``.
-        *publish_type*: 0 = Private, 1 = Internal, 2 = Public.
+        *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
         """
         ...
 
@@ -902,6 +927,63 @@ class KappaApkClient:
         """Poll until bulk job reaches a terminal status or times out."""
         ...
 
+    def retry_bulk_upload_job(
+        self,
+        dataset_id: int,
+        job_id: str,
+        sources: Optional[Any] = None,
+    ) -> dict[str, Any]:
+        """Retry a bulk upload job (optional overrides in *sources*)."""
+        ...
+
+    def mark_dataset_entities_labeled(
+        self,
+        dataset_id: int,
+        dataset_entity_ids: list[str],
+        remark: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Mark default-algorithm entities as labeled."""
+        ...
+
+    def download_dataset_entity_file(
+        self,
+        dataset_id: int,
+        file_id: str,
+        dest_path: str,
+        as_attachment: bool = False,
+    ) -> str:
+        """Download an entity file to *dest_path*; returns the path written."""
+        ...
+
+    def get_dataset_custom_schema(
+        self,
+        dataset_id: int,
+        schema_kind: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    def put_dataset_custom_schema(self, dataset_id: int, schema: Any) -> dict[str, Any]: ...
+    def lock_dataset_custom_schema(
+        self,
+        dataset_id: int,
+        schema_kind: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    def unlock_dataset_custom_schema(
+        self,
+        dataset_id: int,
+        schema_kind: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    def infer_dataset_custom_schema(
+        self,
+        dataset_id: int,
+        csv_content: str,
+        sample_rows: Optional[int] = None,
+    ) -> dict[str, Any]: ...
+    def add_dataset_custom_schema_column(
+        self,
+        dataset_id: int,
+        column: Any,
+        schema_kind: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+
     # --- dataset version management ---
 
     def create_dataset_version(
@@ -939,8 +1021,16 @@ class KappaApkClient:
     ) -> dict[str, Any]:
         """Publish a dataset version.
 
-        *publish_type*: 0 = Private, 1 = Internal, 2 = Public.
+        *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
         """
+        ...
+
+    def recover_dataset_version(self, dataset_id: int, version_no: str) -> dict[str, Any]:
+        """Recover a soft-deleted dataset version."""
+        ...
+
+    def refresh_dataset_version(self, dataset_id: int, version_no: str) -> dict[str, Any]:
+        """Rebuild the version archive after entity changes."""
         ...
 
     # --- benchmarks ---
@@ -972,6 +1062,29 @@ class KappaApkClient:
     def create_model_inference(self, model_id: str, inference: Any) -> dict[str, Any]: ...
     def list_model_inferences(self, model_id: str) -> dict[str, Any]: ...
     def update_model_inference(self, model_id: str, inference_id: int, update: Any) -> dict[str, Any]: ...
+    def upload_model_inference_file(
+        self,
+        model_id: str,
+        inference_id: int,
+        file_path: str,
+        file_category: Optional[int] = None,
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        """Upload inference artifact (*file_category* 1–5; default 2 Inference)."""
+        ...
+    def download_model_inference_artifacts(
+        self,
+        model_id: str,
+        inference_id: int,
+        dest_path: str,
+    ) -> str: ...
+    def download_model_version_artifacts(
+        self,
+        model_id: str,
+        version_id: int,
+        dest_path: str,
+    ) -> str: ...
+    def get_model_version_inference(self, model_id: str, version_id: int) -> dict[str, Any]: ...
 
     def get_model_inference_schema(self, model_id: str) -> dict[str, Any]: ...
     def update_model_inference_schema(self, model_id: str, schema: Any) -> dict[str, Any]: ...
@@ -979,6 +1092,12 @@ class KappaApkClient:
     def validate_inference_result(self, model_id: str, inference_result: Any) -> dict[str, Any]: ...
     def list_inference_metrics(self) -> dict[str, Any]: ...
     def list_inference_schema_types(self) -> dict[str, Any]: ...
+    def get_model_inference_schema_history(
+        self,
+        model_id: str,
+        limit: Optional[int] = None,
+    ) -> dict[str, Any]: ...
+    def get_inference_schema_type(self, model_type: int) -> dict[str, Any]: ...
 
     def list_model_pipelines(self, model_id: str) -> dict[str, Any]: ...
     def create_model_pipeline(self, model_id: str, version_id: int, pipeline: Any) -> dict[str, Any]: ...

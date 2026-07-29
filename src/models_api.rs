@@ -413,4 +413,137 @@ impl ModelsApi {
             Some(client.require_token()?),
         )
     }
+
+    // --- inference / version artifacts ---
+
+    /// Upload or replace an inference artifact file.
+    ///
+    /// `file_category`: 1 Training, 2 Inference (default), 3 Model, 4 Data, 5 Other.
+    /// `replace`: when true uses PATCH, otherwise POST.
+    pub fn upload_model_inference_file<T: ApiClient>(
+        client: &T,
+        model_id: &str,
+        inference_id: i32,
+        file_path: &str,
+        file_category: Option<i32>,
+        replace: bool,
+    ) -> PyResult<PyObject> {
+        let category = file_category.unwrap_or(2);
+        if !(1..=5).contains(&category) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "file_category must be 1–5 (1 Training, 2 Inference, 3 Model, 4 Data, 5 Other)",
+            ));
+        }
+        let bytes = std::fs::read(file_path).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Cannot read file {}: {}",
+                file_path, e
+            ))
+        })?;
+        let fname = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("artifact.bin")
+            .to_string();
+        let endpoint = format!(
+            "/model-micro-services/v2/models/inferences/files/{}/{}?file_category={}",
+            model_id, inference_id, category
+        );
+        let method = if replace { "PATCH" } else { "POST" };
+        client.submit_named_file(
+            method,
+            endpoint,
+            "file",
+            bytes,
+            fname,
+            Some(client.require_token()?),
+        )
+    }
+
+    pub fn download_model_inference_artifacts<T: ApiClient>(
+        client: &T,
+        model_id: &str,
+        inference_id: i32,
+        dest_path: &str,
+    ) -> PyResult<String> {
+        let endpoint = format!(
+            "/model-micro-services/v2/models/inferences/files/{}/{}/zip",
+            model_id, inference_id
+        );
+        write_download(client, endpoint, dest_path)
+    }
+
+    pub fn download_model_version_artifacts<T: ApiClient>(
+        client: &T,
+        model_id: &str,
+        version_id: i32,
+        dest_path: &str,
+    ) -> PyResult<String> {
+        let endpoint = format!(
+            "/model-micro-services/v2/models/versions/{}/{}/artifacts/zip",
+            model_id, version_id
+        );
+        write_download(client, endpoint, dest_path)
+    }
+
+    pub fn get_model_version_inference<T: ApiClient>(
+        client: &T,
+        model_id: &str,
+        version_id: i32,
+    ) -> PyResult<PyObject> {
+        let endpoint = format!(
+            "/model-micro-services/v2/models/versions/inference/{}/{}",
+            model_id, version_id
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
+    }
+
+    pub fn get_model_inference_schema_history<T: ApiClient>(
+        client: &T,
+        model_id: &str,
+        limit: Option<i32>,
+    ) -> PyResult<PyObject> {
+        let limit = limit.unwrap_or(50);
+        let endpoint = format!(
+            "/model-micro-services/v2/models/{}/inference-schema/history?limit={}",
+            model_id, limit
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
+    }
+
+    pub fn get_inference_schema_type<T: ApiClient>(
+        client: &T,
+        model_type: i32,
+    ) -> PyResult<PyObject> {
+        let endpoint = format!(
+            "/model-micro-services/v2/models/inference-schemas/types/{}",
+            model_type
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
+    }
+}
+
+fn write_download<T: ApiClient>(
+    client: &T,
+    endpoint: String,
+    dest_path: &str,
+) -> PyResult<String> {
+    let bytes = client.download_bytes(endpoint, Some(client.require_token()?))?;
+    if let Some(parent) = std::path::Path::new(dest_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                    "Failed to create parent dir for {}: {}",
+                    dest_path, e
+                ))
+            })?;
+        }
+    }
+    std::fs::write(dest_path, bytes).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+            "Failed to write {}: {}",
+            dest_path, e
+        ))
+    })?;
+    Ok(dest_path.to_string())
 }

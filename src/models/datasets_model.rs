@@ -195,6 +195,23 @@ impl DatasetItem {
             }
         })
     }
+
+    /// Entity split from `dsEntityInfo.split` (defaults to `"train"` when absent).
+    ///
+    /// Common values: `train`, `validation`, `test` (custom schemas may allow more).
+    #[getter]
+    pub fn split(&self) -> String {
+        entity_split_from_info(self.entity_info.as_ref())
+    }
+}
+
+/// Resolve split for a dataset item (`dsEntityInfo.split`, default `"train"`).
+pub fn entity_split_from_info(info: Option<&HashMap<String, serde_json::Value>>) -> String {
+    info.and_then(|m| m.get("split"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "train".to_string())
 }
 
 fn is_zero_i32(v: &i32) -> bool {
@@ -316,6 +333,8 @@ impl UpdateDatasetRequest {
 }
 
 /// Mirrors `NewDatasetEntity`. `ds_entity_info` and optional `files_category` are Python dicts.
+///
+/// Optional `split` is merged into `dsEntityInfo.split` on serialize (`train`/`validation`/`test`).
 #[pyclass]
 pub struct NewDatasetEntity {
     #[pyo3(get, set)]
@@ -334,12 +353,15 @@ pub struct NewDatasetEntity {
     #[pyo3(get, set)]
     pub location_id: Option<i32>,
     files_category: Option<Py<PyAny>>,
+    /// Optional train/validation/test (or schema-allowed) split written into `dsEntityInfo`.
+    #[pyo3(get, set)]
+    pub split: Option<String>,
 }
 
 #[pymethods]
 impl NewDatasetEntity {
     #[new]
-    #[pyo3(signature = (ds_entity_name, collected_on, labeling_algo, ds_entity_info, dataset_id=0, user_id=0, entity_source=None, location_id=None, files_category=None))]
+    #[pyo3(signature = (ds_entity_name, collected_on, labeling_algo, ds_entity_info, dataset_id=0, user_id=0, entity_source=None, location_id=None, files_category=None, split=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         ds_entity_name: String,
@@ -351,6 +373,7 @@ impl NewDatasetEntity {
         entity_source: Option<String>,
         location_id: Option<i32>,
         files_category: Option<Py<PyAny>>,
+        split: Option<String>,
     ) -> Self {
         NewDatasetEntity {
             dataset_id,
@@ -362,6 +385,7 @@ impl NewDatasetEntity {
             ds_entity_info,
             location_id,
             files_category,
+            split,
         }
     }
 
@@ -390,7 +414,15 @@ impl NewDatasetEntity {
 
     pub fn to_api_json(&self, py: Python<'_>) -> PyResult<String> {
         use serde_json::{json, Map, Value};
-        let info = pyany_to_json_value(&self.ds_entity_info.bind(py))?;
+        let mut info = pyany_to_json_value(&self.ds_entity_info.bind(py))?;
+        if let Some(ref split) = self.split {
+            let normalized = normalize_entity_split(split)?;
+            if let Some(obj) = info.as_object_mut() {
+                obj.insert("split".to_string(), json!(normalized));
+            } else {
+                info = json!({ "split": normalized });
+            }
+        }
         let mut map = Map::new();
         if self.dataset_id != 0 {
             map.insert("datasetId".to_string(), json!(self.dataset_id));
@@ -422,7 +454,31 @@ impl NewDatasetEntity {
     }
 }
 
+/// Normalize entity `split` (non-empty). Recommended: `train`, `validation`, `test`.
+pub fn normalize_entity_split(split: &str) -> PyResult<String> {
+    let s = split.trim().to_string();
+    if s.is_empty() {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "split must be a non-empty string (e.g. 'train', 'validation', 'test')",
+        ));
+    }
+    Ok(s)
+}
+
+/// Normalize entity file category to `input` or `output`.
+pub fn normalize_entity_file_category(category: &str) -> PyResult<String> {
+    let c = category.trim().to_ascii_lowercase();
+    match c.as_str() {
+        "input" | "output" => Ok(c),
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "file_category must be 'input' or 'output'",
+        )),
+    }
+}
+
 /// Mirrors `UpdateDatasetEntity` for entity updates. `remark` is required by the service.
+///
+/// Optional `split` is merged into `dsEntityInfo.split` on serialize.
 #[pyclass]
 pub struct UpdateDatasetEntity {
     #[pyo3(get, set)]
@@ -445,12 +501,14 @@ pub struct UpdateDatasetEntity {
     pub version_id: i32,
     #[pyo3(get, set)]
     pub update_latest_entity: bool,
+    #[pyo3(get, set)]
+    pub split: Option<String>,
 }
 
 #[pymethods]
 impl UpdateDatasetEntity {
     #[new]
-    #[pyo3(signature = (remark, ds_entity_name=None, entity_source=None, collected_on=None, labeling_algo=None, ds_entity_info=None, location_id=None, ds_entity_status=None, files_category=None, version_id=0, update_latest_entity=false))]
+    #[pyo3(signature = (remark, ds_entity_name=None, entity_source=None, collected_on=None, labeling_algo=None, ds_entity_info=None, location_id=None, ds_entity_status=None, files_category=None, version_id=0, update_latest_entity=false, split=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         remark: String,
@@ -464,6 +522,7 @@ impl UpdateDatasetEntity {
         files_category: Option<Py<PyAny>>,
         version_id: i32,
         update_latest_entity: bool,
+        split: Option<String>,
     ) -> Self {
         UpdateDatasetEntity {
             ds_entity_name,
@@ -477,6 +536,7 @@ impl UpdateDatasetEntity {
             files_category,
             version_id,
             update_latest_entity,
+            split,
         }
     }
 
@@ -521,8 +581,26 @@ impl UpdateDatasetEntity {
         if let Some(ref a) = self.labeling_algo {
             map.insert("labelingAlgo".to_string(), json!(a));
         }
-        if let Some(ref p) = self.ds_entity_info {
-            let v = pyany_to_json_value(&p.bind(py))?;
+        let mut info_value = if let Some(ref p) = self.ds_entity_info {
+            Some(pyany_to_json_value(&p.bind(py))?)
+        } else {
+            None
+        };
+        if let Some(ref split) = self.split {
+            let normalized = normalize_entity_split(split)?;
+            match info_value.as_mut() {
+                Some(Value::Object(obj)) => {
+                    obj.insert("split".to_string(), json!(normalized));
+                }
+                Some(_) => {
+                    info_value = Some(json!({ "split": normalized }));
+                }
+                None => {
+                    info_value = Some(json!({ "split": normalized }));
+                }
+            }
+        }
+        if let Some(v) = info_value {
             map.insert("dsEntityInfo".to_string(), v);
         }
         if let Some(id) = self.location_id {

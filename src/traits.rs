@@ -67,6 +67,32 @@ pub trait ApiClient {
         ))
     }
 
+    /// Authenticated binary download (artifact ZIP, entity file, etc.).
+    fn download_bytes(
+        &self,
+        _endpoint: String,
+        _token: Option<String>,
+    ) -> PyResult<Vec<u8>> {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This ApiClient does not support binary download",
+        ))
+    }
+
+    /// Multipart upload with a single named file field (e.g. model inference `file`).
+    fn submit_named_file(
+        &self,
+        _method: &str,
+        _endpoint: String,
+        _field_name: &str,
+        _file_bytes: Vec<u8>,
+        _file_name: String,
+        _token: Option<String>,
+    ) -> PyResult<PyObject> {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This ApiClient does not support named file upload",
+        ))
+    }
+
     fn is_authenticated(&self) -> bool {
         self.get_token().is_some()
     }
