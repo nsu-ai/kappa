@@ -42,13 +42,26 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 
 ---
 
+## Конфиг и ML-теги
+
+| Метод | HTTP | Примечания |
+|---|---|---|
+| `get_system_config(tag)` | `GET /user-micro-services/v2/system/config/{tag}` | Например `dataset_type`, `dataset_tags_1` |
+| `list_predefined_ml_tags(type_id)` | то же (`dataset_tags_{type_id}`) | Display-значения для форм создания |
+
+Хелперы: `join_ml_tags(primary, *extras)`, `ensure_primary_ml_tag_first`, `validate_ml_tags`.
+
+---
+
 ## CRUD датасетов
 
 | Метод | HTTP |
 |---|---|
-| `add_dataset(dataset)` | `POST …/datasets/new` |
+| `add_dataset(dataset, check_tags=True)` | `POST …/datasets/new` |
 | `update_dataset(dataset_id, update)` | `PUT …/datasets/{id}` |
 | `delete_dataset(dataset_id, remark)` | `DELETE …/datasets/{id}` (мягкое удаление; восстановление через `/datasets/recover` на сервере) |
+
+`check_tags=True` (по умолчанию) требует, чтобы **первый** тег был предопределённым для типа. То же для `create_model(..., check_tags=True)`.
 
 `dataset` / `update` принимают типизированные модели или обычный `dict` (ключи JSON в camelCase).
 
@@ -91,7 +104,7 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 | `delete_dataset_version(dataset_id, version_no)` | `DELETE …/versions/{id}/{ver}` |
 | `publish_dataset_version(dataset_id, version_no, publish_type)` | `POST …/versions/publish/{id}/{ver}?publish_type=N` |
 
-`publish_type`: `0` Private · `1` Internal · `2` Public
+`publish_type`: `0` Not Published · `1` Private · `2` Open Source · `3` Public on Demand · `4` Purchase
 
 ---
 

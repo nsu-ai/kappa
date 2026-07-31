@@ -18,7 +18,7 @@ datasets = client.list_datasets_typed()
 
 # Rich filter
 results = client.filter_datasets(
-    dataset_tags="vision,classification",
+    dataset_tags="Image Classification",
     dataset_type=1,
     dataset_status=1,
     publish_type=1,
@@ -33,18 +33,31 @@ results = client.filter_datasets(
 ## Create, update, delete
 
 ```python
-from kappa_apk import NewDataset, UpdateDatasetRequest
+from kappa_apk import NewDataset, UpdateDatasetRequest, join_ml_tags
 
+# Tags: first must be a predefined ML tag for dataset_type (catalog:
+# GET …/system/config/dataset_tags_{type}). Extra custom tags are allowed after it.
 result = client.add_dataset(NewDataset(
     dataset_name="MyDataset",
-    dataset_type=1,
+    dataset_type=1,  # Computer Vision → dataset_tags_1
     dataset_short_info="Image classification",
-    dataset_tags="vision",
+    dataset_tags=join_ml_tags("Image Classification", "my-project", "batch-a"),
     dataset_verification_type=1,
 ))
 
 client.update_dataset(42, UpdateDatasetRequest(dataset_name="MyDataset-v2", remark="Renamed"))
 client.delete_dataset(42, remark="Obsolete")   # soft-delete
+```
+
+**Tag rules (backend + FE):** catalog is `GET …/system/config/dataset_tags_{dataset_type}` (same list for model create). Backend requires ≥1 predefined ML tag (`ml_tags_config_fields_info` after normalizing display labels). Put that predefined tag **first** — Label Studio / CVAT use the first predefined tag in order. Custom tags (`torchvision`, project names, …) may follow.
+
+```python
+from kappa_apk import join_ml_tags
+
+# Or: client.list_predefined_ml_tags(1)  → ["Image Classification", …]
+tags = join_ml_tags("Image Classification", "torchvision", "my-batch")
+client.add_dataset(NewDataset(..., dataset_type=1, dataset_tags=tags))
+# Same for models: create_model({..., "mlModelType": 1, "mlModelTags": tags})
 ```
 
 ---
@@ -93,10 +106,12 @@ Async job API — same flow as the React bulk dialog. Full script: [`code_exampl
 
 | Upload | Max size | Notes |
 |---|---|---|
-| CSV | **2 GB** | `upload_type="csv"` |
-| Archive `.zip` | **50 GB** | `upload_type="archive"` + `archive_layout` |
+| CSV | **2 GB** client | Backend default is **50 MB** (`BULK_UPLOAD_MAX_CSV_BYTES`); raise that env for larger CSVs |
+| Archive `.zip` | **50 GB** | `upload_type="archive"` + `archive_layout` + `dataset_schema` |
 
-`archive_layout` must be `input_output` or `classes`. The file is **streamed** from disk (not loaded fully into RAM).
+`archive_layout` must be `input_output` or `classes`. For `input_output`, pass `dataset_schema={"inputDataPath": "input", ...}`; for `classes`, pass a non-empty `classes` list. Do **not** send an empty `{}` schema — the server treats that as missing and returns 422. The file is **streamed** from disk (not loaded fully into RAM).
+
+Also see [`code_examples/dataset_operations_example.py`](../code_examples/dataset_operations_example.py) (CUD → entities → version) and [`code_examples/dataset_lifecycle_example.py`](../code_examples/dataset_lifecycle_example.py) (schema, mark-labeled, soft-delete/recover).
 
 ```python
 from kappa_apk import compatibility_info, min_backend_version
@@ -119,6 +134,7 @@ start = client.bulk_upload_dataset_entities(
     labeling_algo="default",
     source="lab-batch-1",
     archive_layout="input_output",  # or "classes"
+    dataset_schema={"inputDataPath": "input"},  # required for input_output
     strict=True,
     on_upload_progress=on_upload,
 )

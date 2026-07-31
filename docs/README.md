@@ -1,6 +1,6 @@
 # kf-sdk documentation (`import kappa_apk`)
 
-> **PyPI:** `kf-sdk` · **Import:** `kappa_apk` · **Version:** 3.0.1 · **Branch:** `main`  
+> **PyPI:** `kf-sdk` · **Import:** `kappa_apk` · **Version:** 3.0.2 · **Branch:** `main`  
 > **Python:** 3.9+ · **API:** Kappa-framework **v2** (JWT identity — no `user_id` / `user_type_id` in URLs)  
 > **Requires backend:** Kappa-framework **≥ 2.10.0** (`kappa_apk.min_backend_version()`)
 >
@@ -24,6 +24,8 @@ Python client for the [Kappa-framework](https://github.com/nsu-ai/kappa) ML plat
 | [Benchmarks.md](Benchmarks.md) | Benchmark workflow + `BenchmarkVerification` |
 | [BuildAndPublish.md](BuildAndPublish.md) | Local wheels, cibuildwheel, PyPI / CI |
 | [`code_examples/bulk_upload.py`](../code_examples/bulk_upload.py) | Bulk upload + transfer % + job progress |
+| [`code_examples/dataset_operations_example.py`](../code_examples/dataset_operations_example.py) | Dataset CUD → labels → entity → version flow |
+| [`code_examples/dataset_lifecycle_example.py`](../code_examples/dataset_lifecycle_example.py) | Schema, mark-labeled, soft-delete/recover |
 
 ---
 

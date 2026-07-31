@@ -4,7 +4,6 @@
 //! Model registry + inference-schema HTTP helpers (no card / no publish).
 
 use pyo3::prelude::*;
-use urlencoding;
 
 use crate::traits::ApiClient;
 
@@ -529,15 +528,15 @@ fn write_download<T: ApiClient>(
     dest_path: &str,
 ) -> PyResult<String> {
     let bytes = client.download_bytes(endpoint, Some(client.require_token()?))?;
-    if let Some(parent) = std::path::Path::new(dest_path).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                    "Failed to create parent dir for {}: {}",
-                    dest_path, e
-                ))
-            })?;
-        }
+    if let Some(parent) = std::path::Path::new(dest_path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Failed to create parent dir for {}: {}",
+                dest_path, e
+            ))
+        })?;
     }
     std::fs::write(dest_path, bytes).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(

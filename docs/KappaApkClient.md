@@ -42,13 +42,22 @@ Paths below are appended to `base_url`. All authenticated dataset/benchmark call
 
 ---
 
+| `get_system_config(tag)` | `GET /user-micro-services/v2/system/config/{tag}` | Config rows (e.g. `dataset_type`, `dataset_tags_1`) |
+| `list_predefined_ml_tags(type_id)` | same (`dataset_tags_{type_id}`) | Display values for create forms |
+
+Helpers (module-level): `join_ml_tags(primary, *extras)`, `ensure_primary_ml_tag_first(tags, primary)`, `validate_ml_tags(tags, predefined, require_primary_first=True)`.
+
+---
+
 ## Dataset CRUD
 
 | Method | HTTP |
 |---|---|
-| `add_dataset(dataset)` | `POST …/datasets/new` |
+| `add_dataset(dataset, check_tags=True)` | `POST …/datasets/new` |
 | `update_dataset(dataset_id, update)` | `PUT …/datasets/{id}` |
 | `delete_dataset(dataset_id, remark)` | `DELETE …/datasets/{id}` (soft-delete; recover via server `/datasets/recover`) |
+
+`check_tags=True` (default) loads `dataset_tags_{dataset_type}` and requires the **first** tag to be predefined. Same rule for `create_model(..., check_tags=True)` with `mlModelType` / `mlModelTags`.
 
 `dataset` / `update` accept typed models or plain `dict` (camelCase JSON keys).
 
@@ -91,7 +100,7 @@ Paths below are appended to `base_url`. All authenticated dataset/benchmark call
 | `delete_dataset_version(dataset_id, version_no)` | `DELETE …/versions/{id}/{ver}` |
 | `publish_dataset_version(dataset_id, version_no, publish_type)` | `POST …/versions/publish/{id}/{ver}?publish_type=N` |
 
-`publish_type`: `0` Private · `1` Internal · `2` Public
+`publish_type`: `0` Not Published · `1` Private · `2` Open Source · `3` Public on Demand · `4` Purchase
 
 ---
 

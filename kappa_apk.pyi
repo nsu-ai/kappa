@@ -13,7 +13,23 @@ def min_backend_version() -> str:
     ...
 
 def compatibility_info() -> dict[str, Any]:
-    """``{sdk_version, min_backend_version, notes}`` for scripts and CI."""
+    """``{sdk_version, min_backend_version, notes, …}`` for scripts and CI."""
+    ...
+
+def join_ml_tags(primary_ml_tag: str, *extras: str) -> str:
+    """Join a predefined primary ML tag (first) with optional custom tags."""
+    ...
+
+def ensure_primary_ml_tag_first(tags: str, primary_ml_tag: str) -> str:
+    """Move or insert ``primary_ml_tag`` as the first comma-separated tag."""
+    ...
+
+def validate_ml_tags(
+    tags: str,
+    predefined_display_values: list[str],
+    require_primary_first: bool = True,
+) -> None:
+    """Raise ``ValueError`` if tags miss a predefined entry or primary is not first."""
     ...
 
 # ---------------------------------------------------------------------------
@@ -677,6 +693,14 @@ class KappaApkClient:
         """Whether *code* (e.g. ``dataset.write``) is granted for the optional scopes."""
         ...
 
+    def get_system_config(self, tag: str) -> list[dict[str, Any]]:
+        """``GET /user-micro-services/v2/system/config/{tag}`` (e.g. ``dataset_tags_1``)."""
+        ...
+
+    def list_predefined_ml_tags(self, type_id: int) -> list[str]:
+        """Display values from ``dataset_tags_{type_id}`` (dataset/model create catalog)."""
+        ...
+
     def get_base_url(self) -> str: ...
     def set_base_url(self, url: str) -> None: ...
 
@@ -778,8 +802,8 @@ class KappaApkClient:
 
     # --- dataset CRUD ---
 
-    def add_dataset(self, dataset: Any) -> dict[str, Any]:
-        """Create a new dataset (accepts :class:`NewDataset` or a plain dict)."""
+    def add_dataset(self, dataset: Any, check_tags: bool = True) -> dict[str, Any]:
+        """Create a dataset. With *check_tags*, first ``dataset_tags`` entry must be predefined."""
         ...
 
     def update_dataset(self, dataset_id: int, update: Any) -> dict[str, Any]:
@@ -1126,7 +1150,9 @@ class KappaApkClient:
         search: Optional[str] = None,
     ) -> dict[str, Any]: ...
     def get_model(self, model_id: str) -> dict[str, Any]: ...
-    def create_model(self, model: Any) -> dict[str, Any]: ...
+    def create_model(self, model: Any, check_tags: bool = True) -> dict[str, Any]:
+        """Create a model. With *check_tags*, first ``mlModelTags`` entry must be predefined."""
+        ...
     def update_model(self, model_id: str, update: Any) -> dict[str, Any]: ...
     def delete_model(self, model_id: str, remark: Optional[str] = None) -> dict[str, Any]: ...
     def get_model_history(self, model_id: str) -> dict[str, Any]: ...

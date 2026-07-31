@@ -909,11 +909,17 @@ impl BulkUploadJob {
         self.bool_field("preflightDeferred", "preflight_deferred")
     }
 
-    /// True when status is completed / failed / cancelled (case-insensitive).
+    /// True when status is a terminal job state (FE `isBulkJobTerminal` parity).
     fn is_terminal(&self) -> bool {
         matches!(
             self.status().to_ascii_lowercase().as_str(),
-            "completed" | "complete" | "failed" | "error" | "cancelled" | "canceled"
+            "completed"
+                | "complete"
+                | "completed_with_errors"
+                | "failed"
+                | "error"
+                | "cancelled"
+                | "canceled"
         )
     }
 
@@ -934,5 +940,28 @@ impl BulkUploadJob {
             self.percent(),
             self.phase()
         )
+    }
+}
+#[cfg(test)]
+mod bulk_upload_job_tests {
+    use super::BulkUploadJob;
+    use serde_json::json;
+
+    #[test]
+    fn is_terminal_includes_completed_with_errors() {
+        let job = BulkUploadJob::from_json_value(json!({
+            "jobId": "j1",
+            "status": "completed_with_errors"
+        }));
+        assert!(job.is_terminal());
+    }
+
+    #[test]
+    fn is_terminal_false_while_running() {
+        let job = BulkUploadJob::from_json_value(json!({
+            "jobId": "j1",
+            "status": "processing"
+        }));
+        assert!(!job.is_terminal());
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "kf-sdk"
-version = "3.0.1"
+version = "3.0.2"
 edition = "2024"
 description = "Python client SDK for the Kappa-framework ML/AI platform"
 license = "BSD-3-Clause"

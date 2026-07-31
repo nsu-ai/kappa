@@ -3,7 +3,6 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PySequence};
-use urlencoding;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,7 +24,7 @@ use crate::models::datasets_model::{
     BulkUploadJob,
 };
 use crate::upload_limits::{
-    self, BULK_ARCHIVE_MAX_BYTES, ENTITY_OR_CSV_MAX_BYTES,
+    self, BULK_ARCHIVE_MAX_BYTES, BULK_CSV_MAX_BYTES, ENTITY_FILE_MAX_BYTES,
 };
 
 /// Default implementation of Datasets trait
@@ -1628,12 +1627,12 @@ tf_dataset = tf.data.Dataset.from_generator(
                     name
                 )));
             }
-            if size > ENTITY_OR_CSV_MAX_BYTES {
+            if size > ENTITY_FILE_MAX_BYTES {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "entity file '{}' exceeds maximum upload size ({}). Max is {}.",
                     name,
                     upload_limits::format_bytes(size),
-                    upload_limits::format_bytes(ENTITY_OR_CSV_MAX_BYTES),
+                    upload_limits::format_bytes(ENTITY_FILE_MAX_BYTES),
                 )));
             }
         }
@@ -1711,7 +1710,11 @@ tf_dataset = tf.data.Dataset.from_generator(
                     "archive_layout is required for upload_type='archive' ('input_output' or 'classes')",
                 )
             })?;
-            let _ = upload_limits::normalize_archive_layout(layout)?;
+            let layout = upload_limits::normalize_archive_layout(layout)?;
+            upload_limits::validate_archive_dataset_schema(
+                &layout,
+                dataset_schema.as_ref(),
+            )?;
             (BULK_ARCHIVE_MAX_BYTES, "bulk archive")
         } else {
             if ext != "csv" {
@@ -1719,7 +1722,7 @@ tf_dataset = tf.data.Dataset.from_generator(
                     "upload_type 'csv' requires a .csv file",
                 ));
             }
-            (ENTITY_OR_CSV_MAX_BYTES, "bulk CSV")
+            (BULK_CSV_MAX_BYTES, "bulk CSV")
         };
         upload_limits::validate_upload_file(path, max_bytes, kind)?;
 
@@ -1729,10 +1732,14 @@ tf_dataset = tf.data.Dataset.from_generator(
         if let Some(s) = source {
             sources.insert("source".to_string(), serde_json::json!(s));
         }
-        if let Some(schema) = dataset_schema {
+        // Omit datasetSchema when unset so BE can fall back to dataset fields
+        // (sending {} is falsy server-side and yields 422 "Schema is necessary.").
+        if let Some(schema) = dataset_schema
+            && !schema.is_null()
+            && !(schema.is_object()
+                && schema.as_object().map(|o| o.is_empty()).unwrap_or(false))
+        {
             sources.insert("datasetSchema".to_string(), schema);
-        } else {
-            sources.insert("datasetSchema".to_string(), serde_json::json!({}));
         }
         if let Some(split) = bulk_split {
             sources.insert(
@@ -1748,7 +1755,7 @@ tf_dataset = tf.data.Dataset.from_generator(
         }
         let sources_json = serde_json::Value::Object(sources).to_string();
 
-        let key = idempotency_key.unwrap_or_else(|| uuid_v4_simple());
+        let key = idempotency_key.unwrap_or_else(uuid_v4_simple);
         let endpoint = format!(
             "/data-micro-services/v2/datasets/datasetEntities/bulk/{}?strict={}",
             dataset_id, strict
@@ -2002,15 +2009,15 @@ tf_dataset = tf.data.Dataset.from_generator(
             endpoint.push_str("?download=true");
         }
         let bytes = client.download_bytes(endpoint, Some(token))?;
-        if let Some(parent) = Path::new(dest_path).parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                        "Failed to create parent dir for {}: {}",
-                        dest_path, e
-                    ))
-                })?;
-            }
+        if let Some(parent) = Path::new(dest_path).parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                    "Failed to create parent dir for {}: {}",
+                    dest_path, e
+                ))
+            })?;
         }
         fs::write(dest_path, bytes).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
@@ -2142,12 +2149,12 @@ fn validate_entity_file_parts(parts: &[(Vec<u8>, String)]) -> PyResult<()> {
                 name
             )));
         }
-        if size > ENTITY_OR_CSV_MAX_BYTES {
+        if size > ENTITY_FILE_MAX_BYTES {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "entity file '{}' exceeds maximum upload size ({}). Max is {}.",
                 name,
                 upload_limits::format_bytes(size),
-                upload_limits::format_bytes(ENTITY_OR_CSV_MAX_BYTES),
+                upload_limits::format_bytes(ENTITY_FILE_MAX_BYTES),
             )));
         }
     }

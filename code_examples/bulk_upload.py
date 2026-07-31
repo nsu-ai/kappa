@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bulk entity upload + job progress example (Kappa-framework ≥ 2.10.0).
 
-Requires: ``pip install kf-sdk`` and a dataset you can write to.
+Requires: ``pip install kf-sdk`` (or local maturin) and a dataset you can write to.
 
 Usage::
 
@@ -9,12 +9,14 @@ Usage::
     export KAPPA_USER=you@example.com
     export KAPPA_PASSWORD=secret
     python code_examples/bulk_upload.py --dataset-id 42 --file ./data.zip \\
-        --upload-type archive --archive-layout input_output
+        --upload-type archive --archive-layout input_output \\
+        --input-data-path input
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -32,6 +34,21 @@ def main() -> int:
         default=None,
         help="Required for archive uploads",
     )
+    parser.add_argument(
+        "--input-data-path",
+        default="input",
+        help="Zip folder for inputs when archive_layout=input_output",
+    )
+    parser.add_argument(
+        "--output-data-path",
+        default=None,
+        help="Optional zip folder for outputs (input_output)",
+    )
+    parser.add_argument(
+        "--dataset-schema-json",
+        default=None,
+        help="Optional full dataset_schema JSON (overrides path helpers)",
+    )
     parser.add_argument("--labeling-algo", default="default")
     parser.add_argument("--source", default="apk-example")
     parser.add_argument("--bulk-split", default="train")
@@ -47,6 +64,21 @@ def main() -> int:
     password = os.environ.get("KAPPA_PASSWORD")
     if not base or not user or not password:
         print("Set KAPPA_URL, KAPPA_USER, KAPPA_PASSWORD", file=sys.stderr)
+        return 2
+
+    dataset_schema = None
+    if args.dataset_schema_json:
+        dataset_schema = json.loads(args.dataset_schema_json)
+    elif args.upload_type == "archive" and args.archive_layout == "input_output":
+        dataset_schema = {"inputDataPath": args.input_data_path}
+        if args.output_data_path:
+            dataset_schema["outputDataPath"] = args.output_data_path
+    elif args.upload_type == "archive" and args.archive_layout == "classes":
+        print(
+            "For archive_layout=classes pass --dataset-schema-json "
+            '\'{"classes":[{"className":"cat","path":"cat","split":"train"}]}\'',
+            file=sys.stderr,
+        )
         return 2
 
     with KappaApkClient(base, user, password) as client:
@@ -66,6 +98,7 @@ def main() -> int:
             upload_type=args.upload_type,
             labeling_algo=args.labeling_algo,
             source=args.source,
+            dataset_schema=dataset_schema,
             bulk_split=args.bulk_split if args.upload_type == "csv" else None,
             archive_layout=args.archive_layout,
             strict=args.strict,
@@ -91,7 +124,7 @@ def main() -> int:
             on_progress=on_job,
         )
         print("Finished:", final)
-        print("can_retry=", final.can_retry, "errors in as_dict()['errors']")
+        print("can_retry=", final.can_retry, "terminal=", final.is_terminal())
         if final.status.lower() in ("failed", "error"):
             return 1
     return 0

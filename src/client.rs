@@ -339,12 +339,12 @@ impl ApiClient for KappaApkClient {
                     }
                     .clamp(0, 100);
                     let prev_pct = last2.swap(pct, Ordering::Relaxed);
-                    if pct != prev_pct || cur >= total2 {
-                        if let Some(ref cb) = cb2 {
-                            Python::with_gil(|py| {
-                                let _ = cb.bind(py).call1((cur, total2, pct));
-                            });
-                        }
+                    if (pct != prev_pct || cur >= total2)
+                        && let Some(ref cb) = cb2
+                    {
+                        Python::with_gil(|py| {
+                            let _ = cb.bind(py).call1((cur, total2, pct));
+                        });
                     }
                     Ok::<_, std::io::Error>(bytes)
                 }
@@ -489,11 +489,11 @@ impl ApiClient for KappaApkClient {
 fn http_error_to_pyerr(status: reqwest::StatusCode, text: String) -> PyErr {
     let detail = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
         json.get("detail")
-            .and_then(|v| {
+            .map(|v| {
                 if let Some(s) = v.as_str() {
-                    Some(s.to_string())
+                    s.to_string()
                 } else {
-                    Some(v.to_string())
+                    v.to_string()
                 }
             })
             .unwrap_or_else(|| text.clone())
@@ -588,6 +588,61 @@ fn encode_new_version_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
         return nv.to_api_json();
     }
     py_json_dumps(v)
+}
+
+fn json_i32_field(value: &serde_json::Value, keys: &[&str]) -> Option<i32> {
+    for key in keys {
+        if let Some(v) = value.get(*key) {
+            if let Some(i) = v.as_i64() {
+                return Some(i as i32);
+            }
+            if let Some(u) = v.as_u64() {
+                return Some(u as i32);
+            }
+            if let Some(s) = v.as_str()
+                && let Ok(i) = s.trim().parse::<i32>()
+            {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+fn json_str_field<'a>(value: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
+    for key in keys {
+        if let Some(s) = value.get(*key).and_then(|v| v.as_str()) {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// Soft-validate create payloads: ≥1 predefined tag for type, and that tag is first.
+fn validate_create_tags_payload(
+    client: &KappaApkClient,
+    body_json: &str,
+    type_keys: &[&str],
+    tags_keys: &[&str],
+) -> PyResult<()> {
+    let value: serde_json::Value = serde_json::from_str(body_json).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid JSON body: {}", e))
+    })?;
+    let type_id = json_i32_field(&value, type_keys).ok_or_else(|| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Missing type field (tried {:?}) for ML tag validation",
+            type_keys
+        ))
+    })?;
+    let tags = json_str_field(&value, tags_keys).unwrap_or("").to_string();
+    let catalog = client.list_predefined_ml_tags(type_id)?;
+    if catalog.is_empty() {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "No predefined ML tags found for type_id={} (system config dataset_tags_{})",
+            type_id, type_id
+        )));
+    }
+    crate::ml_tags::validate_ml_tags(tags, catalog, true)
 }
 
 // ---------------------------------------------------------------------------
@@ -846,6 +901,50 @@ impl KappaApkClient {
         Users::has_permission(self, &code, dataset_id, org_id)
     }
 
+    /// System configuration rows (`GET /user-micro-services/v2/system/config/{tag}`).
+    ///
+    /// Examples: ``"dataset_type"``, ``"dataset_tags_1"`` (CV predefined ML tags).
+    pub fn get_system_config(&self, tag: String) -> PyResult<PyObject> {
+        let token = self.require_token()?;
+        let endpoint = format!("/user-micro-services/v2/system/config/{}", tag.trim());
+        self.make_request("GET".to_string(), endpoint, None, Some(token))
+    }
+
+    /// Display values of predefined ML tags for a dataset/model type id
+    /// (`dataset_tags_{type_id}` — same catalog the React create dialogs use).
+    pub fn list_predefined_ml_tags(&self, type_id: i32) -> PyResult<Vec<String>> {
+        if type_id <= 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "type_id must be a positive dataset_type / model_type id",
+            ));
+        }
+        let rows = self.get_system_config(format!("dataset_tags_{}", type_id))?;
+        Python::with_gil(|py| {
+            let list = rows.bind(py);
+            let seq = list
+                .downcast::<pyo3::types::PyList>()
+                .map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                        "system config response must be a list",
+                    )
+                })?;
+            let mut out = Vec::with_capacity(seq.len());
+            for item in seq.iter() {
+                let display = item
+                    .get_item("displayValue")
+                    .or_else(|_| item.get_item("display_value"))
+                    .ok()
+                    .and_then(|v| v.extract::<String>().ok())
+                    .unwrap_or_default();
+                let trimmed = display.trim().to_string();
+                if !trimmed.is_empty() {
+                    out.push(trimmed);
+                }
+            }
+            Ok(out)
+        })
+    }
+
     /// List datasets for the current user (paginated, raw JSON dict).
     #[pyo3(signature = (page=None, size=None, order_by=None, order_keyword=None))]
     pub fn list_datasets(
@@ -991,8 +1090,25 @@ impl KappaApkClient {
     }
 
     /// Create a dataset (`POST /data-micro-services/v2/datasets/new`).
-    pub fn add_dataset(&self, dataset: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    ///
+    /// When ``check_tags`` is true (default), loads predefined tags for
+    /// ``dataset_type`` from system config and requires the **first**
+    /// ``dataset_tags`` entry to be one of them (custom tags may follow).
+    #[pyo3(signature = (dataset, check_tags=true))]
+    pub fn add_dataset(
+        &self,
+        dataset: &Bound<'_, PyAny>,
+        check_tags: bool,
+    ) -> PyResult<PyObject> {
         let body = encode_new_dataset_payload(dataset)?;
+        if check_tags {
+            validate_create_tags_payload(
+                self,
+                &body,
+                &["datasetType", "dataset_type"],
+                &["datasetTags", "dataset_tags"],
+            )?;
+        }
         Datasets::add_dataset(self, body)
     }
 
@@ -1566,8 +1682,25 @@ impl KappaApkClient {
         crate::models_api::ModelsApi::get_model(self, &model_id)
     }
 
-    pub fn create_model(&self, model: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        crate::models_api::ModelsApi::create_model(self, py_json_dumps(model)?)
+    /// Create a model. When ``check_tags`` is true (default), requires the first
+    /// ``mlModelTags`` / ``modelTags`` entry to be a predefined tag for ``mlModelType``
+    /// (same ``dataset_tags_{type}`` catalog as datasets).
+    #[pyo3(signature = (model, check_tags=true))]
+    pub fn create_model(
+        &self,
+        model: &Bound<'_, PyAny>,
+        check_tags: bool,
+    ) -> PyResult<PyObject> {
+        let body = py_json_dumps(model)?;
+        if check_tags {
+            validate_create_tags_payload(
+                self,
+                &body,
+                &["mlModelType", "modelType", "ml_model_type", "model_type"],
+                &["mlModelTags", "modelTags", "ml_model_tags", "model_tags"],
+            )?;
+        }
+        crate::models_api::ModelsApi::create_model(self, body)
     }
 
     pub fn update_model(&self, model_id: String, update: &Bound<'_, PyAny>) -> PyResult<PyObject> {

@@ -83,15 +83,15 @@ fn permission_code_present(value: &serde_json::Value, code: &str) -> bool {
             serde_json::Value::String(s) => s == needle || s.ends_with(needle),
             serde_json::Value::Array(arr) => arr.iter().any(|x| scan(x, needle)),
             serde_json::Value::Object(map) => {
-                if let Some(c) = map.get("code").or_else(|| map.get("permissionCode")) {
-                    if scan(c, needle) {
-                        return true;
-                    }
+                if let Some(c) = map.get("code").or_else(|| map.get("permissionCode"))
+                    && scan(c, needle)
+                {
+                    return true;
                 }
-                if let Some(p) = map.get("permission") {
-                    if scan(p, needle) {
-                        return true;
-                    }
+                if let Some(p) = map.get("permission")
+                    && scan(p, needle)
+                {
+                    return true;
                 }
                 map.values().any(|x| scan(x, needle))
             }

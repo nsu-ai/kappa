@@ -21,8 +21,8 @@
 | `dataset_short_info` | `str` | |
 | `dataset_status` | `int` | |
 | `dataset_status_interp` | `str` | |
-| `dataset_tags` | `str` | Через запятую |
-| `publish_type` | `int` | 0 Private · 1 Internal · 2 Public |
+| `dataset_tags` | `str` | Через запятую. **Первый** тег — предопределённый ML-тег для `dataset_type` (`dataset_tags_{type}`); далее можно custom |
+| `publish_type` | `int` | 0 Not Published · 1 Private · 2 Open Source · 3 Public on Demand · 4 Purchase |
 | `created_on` / `modified_on` | `str` | |
 | `version_no` | `str \| None` | Строка последней версии |
 
@@ -92,13 +92,13 @@ file.file               # str — абсолютный путь на диске
 ### Пример: `NewDataset`
 
 ```python
-from kappa_apk import NewDataset
+from kappa_apk import NewDataset, join_ml_tags
 
 ds = NewDataset(
     dataset_name="MyDataset",
     dataset_type=1,
     dataset_short_info="Классификация изображений",
-    dataset_tags="vision,cls",
+    dataset_tags=join_ml_tags("Image Classification", "cls"),
     dataset_verification_type=1,
 )
 client.add_dataset(ds)

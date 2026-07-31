@@ -21,8 +21,8 @@ Dataset metadata from listing / filter / lookup.
 | `dataset_short_info` | `str` | |
 | `dataset_status` | `int` | |
 | `dataset_status_interp` | `str` | |
-| `dataset_tags` | `str` | Comma-separated |
-| `publish_type` | `int` | 0 Private · 1 Internal · 2 Public |
+| `dataset_tags` | `str` | Comma-separated. **First** tag must be a predefined ML tag for `dataset_type` (from `dataset_tags_{type}`); custom tags may follow |
+| `publish_type` | `int` | 0 Not Published · 1 Private · 2 Open Source · 3 Public on Demand · 4 Purchase |
 | `created_on` / `modified_on` | `str` | |
 | `version_no` | `str \| None` | Latest version string |
 
@@ -92,16 +92,16 @@ All accept equivalent plain `dict` with camelCase keys at the client boundary.
 ### Example: `NewDataset`
 
 ```python
-from kappa_apk import NewDataset
+from kappa_apk import NewDataset, join_ml_tags
 
 ds = NewDataset(
     dataset_name="MyDataset",
     dataset_type=1,
     dataset_short_info="Vision classification",
-    dataset_tags="vision,cls",
+    dataset_tags=join_ml_tags("Image Classification", "cls"),
     dataset_verification_type=1,
 )
-client.add_dataset(ds)
+client.add_dataset(ds)  # check_tags=True by default
 ```
 
 ### Example: `NewDatasetEntity`
