@@ -3,6 +3,8 @@ requires = ["maturin>=1.9,<2.0"]
 build-backend = "maturin"
 
 [project]
+# PyPI distribution name stays `kf-sdk` for continuity with earlier releases.
+# The import module is intentionally `kappa_apk` (see [tool.maturin] / Cargo lib name).
 name = "kf-sdk"
 description = "Python client SDK for the Kappa-framework ML/AI platform"
 readme = "README.md"

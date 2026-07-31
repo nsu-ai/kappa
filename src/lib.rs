@@ -7,9 +7,13 @@ use pyo3::prelude::*;
 mod client;
 mod traits;
 mod models;
+mod models_api;
 mod users;
 mod benchmarks;
 mod utils;
+mod compat;
+mod upload_limits;
+mod ml_tags;
 pub mod transforms;
 
 // Public API modules
@@ -17,12 +21,14 @@ pub mod datasets;
 
 // Re-export main types for external use
 use client::KappaApkClient;
+use compat::{compatibility_info, min_backend_version};
+use ml_tags::{ensure_primary_ml_tag_first, join_ml_tags, validate_ml_tags};
 use datasets::dataloader_helper::DataLoaderHelper;
 use datasets::datasets::KappaDataset;
 use datasets::kappa_dataloader::KappaDataLoader;
 use models::datasets_model::{
-    DatasetLabel, DeleteDatasetEntities, NewDataset, NewDatasetEntity, NewDatasetVersion,
-    UpdateDatasetEntity, UpdateDatasetLabel, UpdateDatasetRequest,
+    BulkUploadJob, DatasetLabel, DeleteDatasetEntities, NewDataset, NewDatasetEntity,
+    NewDatasetVersion, UpdateDatasetEntity, UpdateDatasetLabel, UpdateDatasetRequest,
 };
 use models::datasets_model::{
     Dataset, DatasetDownloadDetails, DatasetItem, DatasetVersionDetails, ItemFile,
@@ -31,7 +37,7 @@ use models::users_model::{OrgDetails, User, UserTypeDetails};
 pub use traits::*;
 use crate::benchmarks::verifications::BenchmarkVerification;
 
-/// Returns the version of the kf-sdk library.
+/// Returns the version of the kf-sdk / kappa_apk library.
 #[pyfunction]
 fn version() -> PyResult<String> {
     Ok(env!("CARGO_PKG_VERSION").to_string())
@@ -41,6 +47,11 @@ fn version() -> PyResult<String> {
 #[pymodule]
 fn kappa_apk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
+    m.add_function(wrap_pyfunction!(min_backend_version, m)?)?;
+    m.add_function(wrap_pyfunction!(compatibility_info, m)?)?;
+    m.add_function(wrap_pyfunction!(join_ml_tags, m)?)?;
+    m.add_function(wrap_pyfunction!(ensure_primary_ml_tag_first, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_ml_tags, m)?)?;
     m.add_class::<KappaApkClient>()?;
     m.add_class::<User>()?;
     m.add_class::<UserTypeDetails>()?;
@@ -62,6 +73,7 @@ fn kappa_apk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<UpdateDatasetLabel>()?;
     m.add_class::<DeleteDatasetEntities>()?;
     m.add_class::<NewDatasetVersion>()?;
+    m.add_class::<BulkUploadJob>()?;
     transforms::vision::register(m)?;
     transforms::text::register(m)?;
     transforms::audio::register(m)?;

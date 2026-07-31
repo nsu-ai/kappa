@@ -349,27 +349,61 @@ impl Benchmarks {
 
     pub fn internal_submit_benchmark(
         &mut self,
+        strict: bool,
     ) -> PyResult<PyObject> {
         let result = self.result.clone().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("No benchmark result found. Call save_benchmark() first.")
         })?;
         let json_obj = Python::with_gil(|py| -> PyResult<PyObject> {
             let client = self.client.borrow(py);
-            
-            let token = client.require_token()?;
+
             let model_id = self.model_id_override.clone()
                 .or_else(|| self.benchmark_details.as_ref().and_then(|bd| bd.model_id.clone()))
                 .ok_or_else(|| {
                     PyErr::new::<pyo3::exceptions::PyValueError, _>("Model ID not found.")
                 })?;
 
+            let payload = serde_json::json!({ "inferenceResult": result });
+            let body = serde_json::to_string(&payload)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to serialize payload: {}", e)))?;
+
+            if strict {
+                let result_only = serde_json::to_string(&result).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to serialize inference result: {}",
+                        e
+                    ))
+                })?;
+                let validation = crate::models_api::ModelsApi::validate_inference_result(
+                    &*client,
+                    &model_id,
+                    result_only,
+                )?;
+                let valid = validation
+                    .bind(py)
+                    .call_method1("get", ("valid",))
+                    .ok()
+                    .and_then(|v| v.extract::<bool>().ok())
+                    .unwrap_or(true);
+                if !valid {
+                    let errors = validation
+                        .bind(py)
+                        .call_method1("get", ("errors",))
+                        .ok()
+                        .map(|e| format!("{:?}", e))
+                        .unwrap_or_else(|| "schema validation failed".to_string());
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Inference schema validation failed: {}",
+                        errors
+                    )));
+                }
+            }
+
+            let token = client.require_token()?;
             let endpoint = format!(
                 "/model-micro-services/v2/models/inferences/{}",
                 model_id
             );
-            let payload = serde_json::json!({ "inferenceResult": result });
-            let body = serde_json::to_string(&payload)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to serialize payload: {}", e)))?;
             client.make_request("POST".to_string(), endpoint, Some(body), Some(token))
         })?;
         Ok(json_obj)
@@ -497,9 +531,13 @@ impl Benchmarks {
     /// 
     /// A benchmark result
     /// ```python
-    /// benchmark.submit_benchmark()
-    /// ```
-    pub fn submit_benchmark(&mut self) -> PyResult<PyObject> { self.internal_submit_benchmark() }
+    /// Submit the saved benchmark result as a model inference.
+    ///
+    /// When ``strict=True`` (default), validates against the model inference schema first.
+    #[pyo3(signature = (strict=true))]
+    pub fn submit_benchmark(&mut self, strict: bool) -> PyResult<PyObject> {
+        self.internal_submit_benchmark(strict)
+    }
 }
 
 fn validate_save_payload(

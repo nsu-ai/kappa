@@ -5,7 +5,31 @@ from __future__ import annotations
 from typing import Any, Iterator, Optional
 
 def version() -> str:
-    """Return the kf-sdk library version string."""
+    """Return the library version string (kf-sdk / kappa_apk)."""
+    ...
+
+def min_backend_version() -> str:
+    """Minimum Kappa-framework product version required (``\"2.10.0\"``)."""
+    ...
+
+def compatibility_info() -> dict[str, Any]:
+    """``{sdk_version, min_backend_version, notes, …}`` for scripts and CI."""
+    ...
+
+def join_ml_tags(primary_ml_tag: str, *extras: str) -> str:
+    """Join a predefined primary ML tag (first) with optional custom tags."""
+    ...
+
+def ensure_primary_ml_tag_first(tags: str, primary_ml_tag: str) -> str:
+    """Move or insert ``primary_ml_tag`` as the first comma-separated tag."""
+    ...
+
+def validate_ml_tags(
+    tags: str,
+    predefined_display_values: list[str],
+    require_primary_first: bool = True,
+) -> None:
+    """Raise ``ValueError`` if tags miss a predefined entry or primary is not first."""
     ...
 
 # ---------------------------------------------------------------------------
@@ -33,6 +57,54 @@ class DatasetItem:
     def files(self) -> Optional[list[ItemFile]]: ...
     @property
     def annotations(self) -> Optional[list[dict[str, Any]]]: ...
+    @property
+    def entity_info(self) -> Optional[dict[str, Any]]: ...
+    @property
+    def split(self) -> str:
+        """``dsEntityInfo.split``; defaults to ``\"train\"`` when absent."""
+        ...
+
+class BulkUploadJob:
+    """Status snapshot for an async bulk entity upload job."""
+
+    @property
+    def job_id(self) -> str: ...
+    @property
+    def dataset_id(self) -> int: ...
+    @property
+    def upload_type(self) -> str: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def phase(self) -> Optional[str]: ...
+    @property
+    def total_rows(self) -> int: ...
+    @property
+    def processed_rows(self) -> int: ...
+    @property
+    def percent(self) -> Optional[int]:
+        """Job processing percent from ``processedRows/totalRows``, or None."""
+        ...
+    @property
+    def source(self) -> Optional[str]: ...
+    @property
+    def filename(self) -> Optional[str]: ...
+    @property
+    def failure_kind(self) -> Optional[str]: ...
+    @property
+    def labeling_algo(self) -> Optional[str]: ...
+    @property
+    def retryable(self) -> bool: ...
+    @property
+    def can_cancel(self) -> bool: ...
+    @property
+    def can_retry(self) -> bool: ...
+    @property
+    def is_stale(self) -> bool: ...
+    @property
+    def preflight_deferred(self) -> bool: ...
+    def is_terminal(self) -> bool: ...
+    def as_dict(self) -> dict[str, Any]: ...
 
 class Dataset:
     """Dataset metadata record returned by listing / lookup calls."""
@@ -57,7 +129,7 @@ class Dataset:
     def dataset_tags(self) -> str: ...
     @property
     def publish_type(self) -> int:
-        """0 = Private, 1 = Internal, 2 = Public."""
+        """0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase."""
         ...
     @property
     def created_on(self) -> str: ...
@@ -328,13 +400,11 @@ class Benchmarks:
         """
         ...
 
-    def submit_benchmark(self) -> dict[str, Any]:
+    def submit_benchmark(self, strict: bool = True) -> dict[str, Any]:
         """Submit the saved benchmark result to the model service.
 
-        Requires :meth:`save_benchmark` to have been called first.
-
-        Returns:
-            The server response as a dict.
+        Requires :meth:`save_benchmark` first. When *strict* is True (default),
+        validates against the model inference schema before POST.
         """
         ...
 
@@ -417,6 +487,7 @@ class NewDatasetEntity:
     ds_entity_info: Any
     location_id: Optional[int]
     files_category: Optional[Any]
+    split: Optional[str]
 
     def __init__(
         self,
@@ -429,6 +500,7 @@ class NewDatasetEntity:
         entity_source: Optional[str] = None,
         location_id: Optional[int] = None,
         files_category: Optional[Any] = None,
+        split: Optional[str] = None,
     ) -> None: ...
 
     def to_api_json(self) -> str: ...
@@ -447,6 +519,7 @@ class UpdateDatasetEntity:
     version_id: int
     update_latest_entity: bool
     remark: str
+    split: Optional[str]
 
     def __init__(
         self,
@@ -461,6 +534,7 @@ class UpdateDatasetEntity:
         files_category: Optional[Any] = None,
         version_id: int = 0,
         update_latest_entity: bool = False,
+        split: Optional[str] = None,
     ) -> None: ...
 
     def to_api_json(self) -> str: ...
@@ -602,6 +676,31 @@ class KappaApkClient:
         """Return the authenticated user's profile (``GET /user-micro-services/v2/users/me``)."""
         ...
 
+    def get_my_permissions(
+        self,
+        dataset_id: Optional[int] = None,
+        org_id: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Effective permissions (``GET /users/me/permissions``)."""
+        ...
+
+    def has_permission(
+        self,
+        code: str,
+        dataset_id: Optional[int] = None,
+        org_id: Optional[int] = None,
+    ) -> bool:
+        """Whether *code* (e.g. ``dataset.write``) is granted for the optional scopes."""
+        ...
+
+    def get_system_config(self, tag: str) -> list[dict[str, Any]]:
+        """``GET /user-micro-services/v2/system/config/{tag}`` (e.g. ``dataset_tags_1``)."""
+        ...
+
+    def list_predefined_ml_tags(self, type_id: int) -> list[str]:
+        """Display values from ``dataset_tags_{type_id}`` (dataset/model create catalog)."""
+        ...
+
     def get_base_url(self) -> str: ...
     def set_base_url(self, url: str) -> None: ...
 
@@ -662,8 +761,13 @@ class KappaApkClient:
         transform: Optional[Any] = None,
         target_transform: Optional[Any] = None,
         transform_input_mode: Optional[str] = None,
+        splits: Optional[list[str]] = None,
     ) -> KappaDataset:
-        """Download a dataset version and wrap it as a :class:`KappaDataset`."""
+        """Download a dataset version and wrap it as a :class:`KappaDataset`.
+
+        *splits*: keep only entities whose ``split`` is in this list
+        (missing split counts as ``\"train\"``).
+        """
         ...
 
     def get_dataset_loader(
@@ -681,6 +785,7 @@ class KappaApkClient:
         transform: Optional[Any] = None,
         target_transform: Optional[Any] = None,
         transform_input_mode: Optional[str] = None,
+        splits: Optional[list[str]] = None,
     ) -> Any:
         """Return a data loader for the requested framework.
 
@@ -690,13 +795,15 @@ class KappaApkClient:
         * ``"pytorch"`` — ``torch.utils.data.DataLoader``
         * ``"transformers"`` — HuggingFace Datasets / ``default_data_collator``
         * ``"tensorflow"`` — ``tf.data.Dataset`` (requires *tf_output_signature*)
+
+        *splits*: optional filter by ``entity_info.split`` (see :meth:`load_kappa_dataset`).
         """
         ...
 
     # --- dataset CRUD ---
 
-    def add_dataset(self, dataset: Any) -> dict[str, Any]:
-        """Create a new dataset (accepts :class:`NewDataset` or a plain dict)."""
+    def add_dataset(self, dataset: Any, check_tags: bool = True) -> dict[str, Any]:
+        """Create a dataset. With *check_tags*, first ``dataset_tags`` entry must be predefined."""
         ...
 
     def update_dataset(self, dataset_id: int, update: Any) -> dict[str, Any]:
@@ -708,11 +815,16 @@ class KappaApkClient:
         dataset_id: int,
         entity: Any,
         file_paths: Optional[list[str]] = None,
+        file_category: Optional[str] = None,
+        split: Optional[str] = None,
     ) -> dict[str, Any]:
         """Add a labelled entity to a dataset with optional file attachments.
 
         *file_paths* entries may be local file paths, local directory paths
         (immediate children only), or ``http://`` / ``https://`` URLs.
+        *file_category*: ``\"input\"`` (default) or ``\"output\"`` — builds
+        ``filesCategory`` for resolved filenames when attaching files.
+        *split*: optional value for ``dsEntityInfo.split`` (e.g. train/validation/test).
         """
         ...
 
@@ -722,6 +834,8 @@ class KappaApkClient:
         entity_id: str,
         update: Any,
         file_paths: Optional[list[str]] = None,
+        file_category: Optional[str] = None,
+        split: Optional[str] = None,
     ) -> dict[str, Any]: ...
 
     # --- dataset lookup ---
@@ -751,7 +865,7 @@ class KappaApkClient:
         """Filter datasets with rich query params.
 
         *dataset_tags* is a comma-separated string, e.g. ``"vision,classification"``.
-        *publish_type*: 0 = Private, 1 = Internal, 2 = Public.
+        *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
         """
         ...
 
@@ -766,8 +880,16 @@ class KappaApkClient:
     ) -> dict[str, Any]:
         """Soft-delete a dataset (sets ``datasetStatus = 0``).
 
-        Deleted datasets can be recovered server-side via ``/datasets/recover``.
+        Recover with :meth:`recover_datasets`.
         """
+        ...
+
+    def recover_datasets(self, dataset_ids: list[int]) -> dict[str, Any]:
+        """Recover soft-deleted datasets (``POST .../datasets/recover``)."""
+        ...
+
+    def check_dataset_name_availability(self, dataset_name: str) -> dict[str, Any]:
+        """Check dataset name uniqueness (``GET .../nameAvailability``)."""
         ...
 
     # --- label management ---
@@ -804,7 +926,10 @@ class KappaApkClient:
         dataset_id: int,
         version_id: Optional[int] = None,
     ) -> dict[str, Any]:
-        """List all entities (samples) in a dataset version."""
+        """List all entities (samples) in a dataset version.
+
+        Deprecated: unpaginated backend route. Prefer :meth:`filter_dataset_entities`.
+        """
         ...
 
     def get_dataset_entity(
@@ -838,6 +963,128 @@ class KappaApkClient:
     ) -> dict[str, Any]:
         """Bulk soft-delete entities by their string IDs."""
         ...
+
+    def recover_dataset_entities(
+        self,
+        dataset_entity_ids: list[str],
+        version_id: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Recover soft-deleted entities (``POST .../datasetEntities/recover``)."""
+        ...
+
+    def upload_dataset_entity_files(
+        self,
+        dataset_id: int,
+        entity_id: str,
+        file_paths: list[str],
+        file_category: Optional[str] = None,
+        check_permission: bool = False,
+    ) -> dict[str, Any]:
+        """Upload files onto an existing entity (``file_category``: input|output; max 2 GB)."""
+        ...
+
+    def delete_dataset_entity_files(
+        self,
+        entity_file_ids: list[str],
+    ) -> dict[str, Any]:
+        """Soft-delete entity files by file ID list."""
+        ...
+
+    def bulk_upload_dataset_entities(
+        self,
+        dataset_id: int,
+        file_path: str,
+        upload_type: str,
+        labeling_algo: str,
+        source: Optional[str] = None,
+        dataset_schema: Optional[Any] = None,
+        bulk_split: Optional[str] = None,
+        archive_layout: Optional[str] = None,
+        strict: bool = True,
+        idempotency_key: Optional[str] = None,
+        on_upload_progress: Optional[Any] = None,
+        check_permission: bool = False,
+    ) -> dict[str, Any]:
+        """Start async bulk upload.
+
+        * ``upload_type``: ``archive`` | ``csv``
+        * CSV max 2 GB; archive ``.zip`` max 50 GB (streamed)
+        * ``archive_layout`` required for archive: ``input_output`` | ``classes``
+        * ``on_upload_progress(sent, total, percent)`` — HTTP transfer progress
+        """
+        ...
+
+    def get_bulk_upload_job(self, dataset_id: int, job_id: str) -> BulkUploadJob: ...
+    def list_bulk_upload_jobs(self, dataset_id: int) -> dict[str, Any]: ...
+    def cancel_bulk_upload_job(self, dataset_id: int, job_id: str) -> dict[str, Any]: ...
+    def cancel_stale_bulk_upload_jobs(self, dataset_id: int) -> dict[str, Any]: ...
+    def wait_for_bulk_upload_job(
+        self,
+        dataset_id: int,
+        job_id: str,
+        poll_interval_secs: Optional[float] = None,
+        timeout_secs: Optional[float] = None,
+        on_progress: Optional[Any] = None,
+    ) -> BulkUploadJob:
+        """Poll until bulk job is terminal; *on_progress(job)* each poll."""
+        ...
+
+    def retry_bulk_upload_job(
+        self,
+        dataset_id: int,
+        job_id: str,
+        sources: Optional[Any] = None,
+    ) -> dict[str, Any]:
+        """Retry a bulk upload job (optional overrides in *sources*)."""
+        ...
+
+    def mark_dataset_entities_labeled(
+        self,
+        dataset_id: int,
+        dataset_entity_ids: list[str],
+        remark: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Mark default-algorithm entities as labeled."""
+        ...
+
+    def download_dataset_entity_file(
+        self,
+        dataset_id: int,
+        file_id: str,
+        dest_path: str,
+        as_attachment: bool = False,
+    ) -> str:
+        """Download an entity file to *dest_path*; returns the path written."""
+        ...
+
+    def get_dataset_custom_schema(
+        self,
+        dataset_id: int,
+        schema_kind: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    def put_dataset_custom_schema(self, dataset_id: int, schema: Any) -> dict[str, Any]: ...
+    def lock_dataset_custom_schema(
+        self,
+        dataset_id: int,
+        schema_kind: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    def unlock_dataset_custom_schema(
+        self,
+        dataset_id: int,
+        schema_kind: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    def infer_dataset_custom_schema(
+        self,
+        dataset_id: int,
+        csv_content: str,
+        sample_rows: Optional[int] = None,
+    ) -> dict[str, Any]: ...
+    def add_dataset_custom_schema_column(
+        self,
+        dataset_id: int,
+        column: Any,
+        schema_kind: Optional[str] = None,
+    ) -> dict[str, Any]: ...
 
     # --- dataset version management ---
 
@@ -876,8 +1123,16 @@ class KappaApkClient:
     ) -> dict[str, Any]:
         """Publish a dataset version.
 
-        *publish_type*: 0 = Private, 1 = Internal, 2 = Public.
+        *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
         """
+        ...
+
+    def recover_dataset_version(self, dataset_id: int, version_no: str) -> dict[str, Any]:
+        """Recover a soft-deleted dataset version."""
+        ...
+
+    def refresh_dataset_version(self, dataset_id: int, version_no: str) -> dict[str, Any]:
+        """Rebuild the version archive after entity changes."""
         ...
 
     # --- benchmarks ---
@@ -885,6 +1140,81 @@ class KappaApkClient:
     def load_benchmark(self, benchmark_id: str) -> Benchmarks:
         """Load a :class:`Benchmarks` handle for the given benchmark ID."""
         ...
+
+    # --- model registry (no card / no publish) ---
+
+    def filter_models(
+        self,
+        page: Optional[int] = None,
+        size: Optional[int] = None,
+        search: Optional[str] = None,
+    ) -> dict[str, Any]: ...
+    def get_model(self, model_id: str) -> dict[str, Any]: ...
+    def create_model(self, model: Any, check_tags: bool = True) -> dict[str, Any]:
+        """Create a model. With *check_tags*, first ``mlModelTags`` entry must be predefined."""
+        ...
+    def update_model(self, model_id: str, update: Any) -> dict[str, Any]: ...
+    def delete_model(self, model_id: str, remark: Optional[str] = None) -> dict[str, Any]: ...
+    def get_model_history(self, model_id: str) -> dict[str, Any]: ...
+
+    def create_model_version(self, model_id: str, version: Any) -> dict[str, Any]: ...
+    def list_model_versions(self, model_id: str) -> dict[str, Any]: ...
+    def get_model_version(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+    def update_model_version(self, model_id: str, version_id: int, update: Any) -> dict[str, Any]: ...
+    def delete_model_version(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+
+    def create_model_inference(self, model_id: str, inference: Any) -> dict[str, Any]: ...
+    def list_model_inferences(self, model_id: str) -> dict[str, Any]: ...
+    def update_model_inference(self, model_id: str, inference_id: int, update: Any) -> dict[str, Any]: ...
+    def upload_model_inference_file(
+        self,
+        model_id: str,
+        inference_id: int,
+        file_path: str,
+        file_category: Optional[int] = None,
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        """Upload inference artifact (*file_category* 1–5; default 2 Inference)."""
+        ...
+    def download_model_inference_artifacts(
+        self,
+        model_id: str,
+        inference_id: int,
+        dest_path: str,
+    ) -> str: ...
+    def download_model_version_artifacts(
+        self,
+        model_id: str,
+        version_id: int,
+        dest_path: str,
+    ) -> str: ...
+    def get_model_version_inference(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+
+    def get_model_inference_schema(self, model_id: str) -> dict[str, Any]: ...
+    def update_model_inference_schema(self, model_id: str, schema: Any) -> dict[str, Any]: ...
+    def delete_model_inference_schema(self, model_id: str) -> dict[str, Any]: ...
+    def validate_inference_result(self, model_id: str, inference_result: Any) -> dict[str, Any]: ...
+    def list_inference_metrics(self) -> dict[str, Any]: ...
+    def list_inference_schema_types(self) -> dict[str, Any]: ...
+    def get_model_inference_schema_history(
+        self,
+        model_id: str,
+        limit: Optional[int] = None,
+    ) -> dict[str, Any]: ...
+    def get_inference_schema_type(self, model_type: int) -> dict[str, Any]: ...
+
+    def list_model_pipelines(self, model_id: str) -> dict[str, Any]: ...
+    def create_model_pipeline(self, model_id: str, version_id: int, pipeline: Any) -> dict[str, Any]: ...
+    def get_model_pipeline(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+    def update_model_pipeline(self, model_id: str, version_id: int, pipeline: Any) -> dict[str, Any]: ...
+    def delete_model_pipeline(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+    def validate_model_pipeline(self, model_id: str, version_id: int) -> dict[str, Any]: ...
+
+    def list_benchmarks(self) -> dict[str, Any]: ...
+    def create_benchmark(self, benchmark: Any) -> dict[str, Any]: ...
+    def update_benchmark(self, benchmark_id: str, update: Any) -> dict[str, Any]: ...
+    def delete_benchmark(self, benchmark_id: str) -> dict[str, Any]: ...
+    def complete_benchmark_inference(self, benchmark_id: str, model_version_id: int) -> dict[str, Any]: ...
 
     # --- raw HTTP ---
 

@@ -38,7 +38,7 @@ show_usage() {
     cat << EOF
 Usage: $0 [MODE] [OPTIONS]
 
-Build wheels (and optionally sdist) for kf-sdk — Rust + PyO3.
+Build wheels (and optionally sdist) for kf-sdk (import kappa_apk) — Rust + PyO3.
 Targets Python 3.9–3.13; builds for every interpreter found on this machine.
 
 MODES (choose one):
@@ -311,7 +311,7 @@ else
     print_status "Mode: local (build only → dist/)"
 fi
 
-print_status "kf-sdk — build starting (output: ${DIST_DIR}/)"
+print_status "kf-sdk (kappa_apk) — build starting (output: ${DIST_DIR}/)"
 
 check_dependencies
 [ "$CLEAN" = true ] && clean_build

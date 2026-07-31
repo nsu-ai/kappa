@@ -18,7 +18,7 @@ datasets = client.list_datasets_typed()
 
 # Расширенный фильтр
 results = client.filter_datasets(
-    dataset_tags="vision,classification",
+    dataset_tags="Image Classification",
     dataset_type=1,
     dataset_status=1,
     publish_type=1,
@@ -33,19 +33,21 @@ results = client.filter_datasets(
 ## Создание, обновление, удаление
 
 ```python
-from kappa_apk import NewDataset, UpdateDatasetRequest
+from kappa_apk import NewDataset, UpdateDatasetRequest, join_ml_tags
 
 result = client.add_dataset(NewDataset(
     dataset_name="MyDataset",
-    dataset_type=1,
+    dataset_type=1,  # Computer Vision → dataset_tags_1
     dataset_short_info="Классификация изображений",
-    dataset_tags="vision",
+    dataset_tags=join_ml_tags("Image Classification", "my-project", "batch-a"),
     dataset_verification_type=1,
 ))
 
 client.update_dataset(42, UpdateDatasetRequest(dataset_name="MyDataset-v2", remark="Переименован"))
 client.delete_dataset(42, remark="Устарел")   # мягкое удаление
 ```
+
+**Правила тегов:** каталог `GET …/system/config/dataset_tags_{dataset_type}` (тот же список при создании модели). Бэкенд требует ≥1 предопределённый ML-тег. Ставьте его **первым** — Label Studio / CVAT берут первый predefined. Custom-теги — после него. Хелперы: `join_ml_tags`, `list_predefined_ml_tags`.
 
 ---
 
@@ -82,6 +84,23 @@ page = client.filter_dataset_entities(42, entity_name="sample", page=0, size=20)
 
 client.delete_dataset_entities(["uuid-1", "uuid-2"], remark="Дубликаты удалены")
 ```
+
+Передайте `file_category="input"|"output"` и опционально `split="train"|"validation"|"test"` при создании/обновлении. Файлы одной сущности — до **2 GB**.
+
+---
+
+## Массовая загрузка (Kappa ≥ 2.10.0)
+
+Асинхронный job API. Пример: [`code_examples/bulk_upload.py`](../../code_examples/bulk_upload.py).
+
+| Загрузка | Макс. размер | Примечание |
+|---|---|---|
+| CSV | **2 GB** (клиент) | На бэкенде по умолчанию **50 MB** (`BULK_UPLOAD_MAX_CSV_BYTES`) |
+| Архив `.zip` | **50 GB** | `upload_type="archive"` + `archive_layout` + `dataset_schema` |
+
+Для `input_output` нужен `dataset_schema={"inputDataPath": "input", ...}`; для `classes` — непустой список `classes`. Пустой `{}` даёт 422. Файл **стримится** с диска.
+
+Поток операций с датасетом: [`dataset_operations_example.py`](../../code_examples/dataset_operations_example.py), lifecycle: [`dataset_lifecycle_example.py`](../../code_examples/dataset_lifecycle_example.py).
 
 ---
 

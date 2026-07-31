@@ -1,4 +1,4 @@
-# kf-sdk
+# kf-sdk (`import kappa_apk`)
 
 [![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/main/LICENSE.md)
 ![Python 3.9–3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-green.svg)
@@ -7,20 +7,21 @@
 
 Python-клиент SDK для **Kappa-framework** — самостоятельно развёртываемой микросервисной платформы для исследовательских ML/AI рабочих процессов.
 
-Реализован на Rust + [PyO3](https://pyo3.rs), распространяется как Python-пакет `kf-sdk` (`import kappa_apk`).
+Реализован на Rust + [PyO3](https://pyo3.rs). **PyPI:** `kf-sdk` · **импорт:** `import kappa_apk` (имя дистрибутива сохранено для совместимости с ранними публикациями).
 
 **Документация SDK:** [`docs/ru/README.md`](docs/ru/README.md) (RU) · [`docs/README.md`](docs/README.md) (EN) | **English version:** [`README.en.md`](README.en.md)
 
 | | |
 |---|---|
-| **Версия** | 3.0.1 |
+| **Версия** | 3.0.2 |
+| **Требует Kappa** | **≥ 2.10.0** (`min_backend_version()`) |
 | **Python** | 3.9+ |
 | **Rust edition** | 2024 |
 | **Лицензия** | BSD-3-Clause ([LICENSE.md](LICENSE.md)) |
 
 ---
 
-# Каппа — ϰ-фреймворк управления датасетами и моделями, версия 3.0.1
+# Каппа — ϰ-фреймворк управления датасетами и моделями, версия 3.0.2
 
 Каппа — набор концептуального и программного обеспечения (фреймворк) для осуществления функций курации датасетов и моделей ([Исследовательский центр](https://nsu.ru/n/ai-center) в сфере искусственного интеллекта по направлению «Строительство и городская среда» НГУ, Новосибирск).
 
@@ -66,7 +67,7 @@ Python-клиент SDK для **Kappa-framework** — самостоятель�
 
 ---
 
-# Установка kf-sdk
+# Установка (`kf-sdk` / `kappa_apk`)
 
 ## Требования
 

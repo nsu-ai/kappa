@@ -3,7 +3,6 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PySequence};
-use urlencoding;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,6 +18,13 @@ use crate::models::datasets_model::{
     ItemFile,
     AnnotationValue,
     DatasetLabel,
+    entity_split_from_info,
+    normalize_entity_file_category,
+    normalize_entity_split,
+    BulkUploadJob,
+};
+use crate::upload_limits::{
+    self, BULK_ARCHIVE_MAX_BYTES, BULK_CSV_MAX_BYTES, ENTITY_FILE_MAX_BYTES,
 };
 
 /// Default implementation of Datasets trait
@@ -998,6 +1004,7 @@ impl Datasets {
         transform: Option<Py<PyAny>>,
         target_transform: Option<Py<PyAny>>,
         transform_input_mode: String,
+        splits: Option<Vec<String>>,
     ) -> PyResult<Py<KappaDataset>> {
         // Enforce that exactly one of dataset_id or dataset_name is provided
         let (id_opt, name_opt) = match (dataset_id, dataset_name) {
@@ -1014,7 +1021,7 @@ impl Datasets {
             }
         };
 
-        let items = Self::load(
+        let mut items = Self::load(
             client,
             id_opt,
             name_opt,
@@ -1022,6 +1029,7 @@ impl Datasets {
             version_no,
             dataset_path,
         )?;
+        items = filter_items_by_splits(items, splits.as_ref())?;
 
         Python::with_gil(|py| {
             Py::new(py, KappaDataset::new(items, transform, target_transform, Some(transform_input_mode)))
@@ -1043,6 +1051,7 @@ impl Datasets {
         transform: Option<Py<PyAny>>,
         target_transform: Option<Py<PyAny>>,
         transform_input_mode: String,
+        splits: Option<Vec<String>>,
     ) -> PyResult<PyObject> {
         let loader_kind = loader_type
             .unwrap_or_else(|| "kappa".to_string())
@@ -1051,7 +1060,7 @@ impl Datasets {
         let shuffle = shuffle.unwrap_or(true);
         let drop_last = drop_last.unwrap_or(false);
 
-        let items = Self::load(
+        let mut items = Self::load(
             client,
             dataset_id,
             dataset_name,
@@ -1059,6 +1068,7 @@ impl Datasets {
             version_no,
             dataset_path,
         )?;
+        items = filter_items_by_splits(items, splits.as_ref())?;
 
         Python::with_gil(|py| {
             let dataset = Py::new(
@@ -1226,11 +1236,17 @@ tf_dataset = tf.data.Dataset.from_generator(
     /// `file_paths`: each entry is a local file path, a local directory (non-recursive: immediate
     /// child files only), or an `http://` / `https://` URL. All resolved payloads are sent as
     /// multipart parts named `files`.
+    ///
+    /// When files are attached, `file_category` (`input`|`output`, default `input`) builds
+    /// `filesCategory` for resolved filenames unless the entity JSON already includes it.
+    /// Optional `split` is merged into `dsEntityInfo.split`.
     pub fn add_dataset_entity<T: ApiClient>(
         client: &T,
         dataset_id: i32,
         entity_json: String,
         file_paths: Vec<String>,
+        file_category: Option<String>,
+        split: Option<String>,
     ) -> PyResult<PyObject> {
         let token = client.require_token()?;
         let endpoint = format!(
@@ -1238,6 +1254,10 @@ tf_dataset = tf.data.Dataset.from_generator(
             dataset_id
         );
         let parts = resolve_entity_file_sources(client, &file_paths)?;
+        validate_entity_file_parts(&parts)?;
+        let filenames: Vec<String> = parts.iter().map(|(_, n)| n.clone()).collect();
+        let entity_json =
+            prepare_entity_payload_json(&entity_json, &filenames, file_category.as_deref(), split.as_deref())?;
         client.submit_dataset_entity_request(
             "POST",
             endpoint,
@@ -1251,12 +1271,15 @@ tf_dataset = tf.data.Dataset.from_generator(
     /// PUT `/datasets/datasetEntities/.../{entity_id}` via [`crate::traits::ApiClient::submit_dataset_entity_request`].
     ///
     /// `file_paths` are resolved the same way as [`Self::add_dataset_entity`].
+    /// See that method for `file_category` / `split` behaviour.
     pub fn update_dataset_entity<T: ApiClient>(
         client: &T,
         dataset_id: i32,
         entity_id: &str,
         update_json: String,
         file_paths: Vec<String>,
+        file_category: Option<String>,
+        split: Option<String>,
     ) -> PyResult<PyObject> {
         let token = client.require_token()?;
         let endpoint = format!(
@@ -1264,6 +1287,10 @@ tf_dataset = tf.data.Dataset.from_generator(
             dataset_id, entity_id
         );
         let parts = resolve_entity_file_sources(client, &file_paths)?;
+        validate_entity_file_parts(&parts)?;
+        let filenames: Vec<String> = parts.iter().map(|(_, n)| n.clone()).collect();
+        let update_json =
+            prepare_entity_payload_json(&update_json, &filenames, file_category.as_deref(), split.as_deref())?;
         client.submit_dataset_entity_request(
             "PUT",
             endpoint,
@@ -1338,8 +1365,8 @@ tf_dataset = tf.data.Dataset.from_generator(
 
     /// Soft-delete a dataset by setting `datasetStatus = 0`.
     ///
-    /// The service uses soft-deletes; deleted datasets can be recovered via the
-    /// `/datasets/recover` endpoint.
+    /// The service uses soft-deletes; deleted datasets can be recovered via
+    /// [`Self::recover_datasets`].
     pub fn delete_dataset<T: ApiClient>(
         client: &T,
         dataset_id: i32,
@@ -1353,6 +1380,30 @@ tf_dataset = tf.data.Dataset.from_generator(
         })
         .to_string();
         client.make_request("PUT".to_string(), endpoint, Some(body), Some(token))
+    }
+
+    /// `POST /datasets/recover` — recover soft-deleted datasets by ID list.
+    pub fn recover_datasets<T: ApiClient>(
+        client: &T,
+        dataset_ids: Vec<i32>,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = "/data-micro-services/v2/datasets/recover".to_string();
+        let body = serde_json::json!({ "datasetIds": dataset_ids }).to_string();
+        client.make_request("POST".to_string(), endpoint, Some(body), Some(token))
+    }
+
+    /// `GET /datasets/nameAvailability?datasetName=` — check unique name before create.
+    pub fn check_dataset_name_availability<T: ApiClient>(
+        client: &T,
+        dataset_name: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/nameAvailability?datasetName={}",
+            urlencoding::encode(dataset_name)
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
     }
 
     // -----------------------------------------------------------------------
@@ -1523,6 +1574,297 @@ tf_dataset = tf.data.Dataset.from_generator(
         client.make_request("DELETE".to_string(), endpoint, Some(body), Some(token))
     }
 
+    /// `POST /datasets/datasetEntities/recover` — recover soft-deleted entities.
+    pub fn recover_dataset_entities<T: ApiClient>(
+        client: &T,
+        dataset_entity_ids: Vec<String>,
+        version_id: Option<i32>,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let mut endpoint = "/data-micro-services/v2/datasets/datasetEntities/recover".to_string();
+        if let Some(vid) = version_id {
+            endpoint.push_str(&format!("?version_id={}", vid));
+        }
+        let body = serde_json::json!(dataset_entity_ids).to_string();
+        client.make_request("POST".to_string(), endpoint, Some(body), Some(token))
+    }
+
+    /// `POST /datasets/datasetEntities/files/{dataset_id}/{entity_id}` — attach files.
+    ///
+    /// `file_category`: ``"input"`` (default) or ``"output"``. Each file ≤ 2 GB.
+    pub fn upload_dataset_entity_files<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        entity_id: &str,
+        file_paths: Vec<String>,
+        file_category: Option<String>,
+        check_permission: bool,
+    ) -> PyResult<PyObject> {
+        if check_permission {
+            ensure_dataset_write(client, dataset_id)?;
+        }
+        let token = client.require_token()?;
+        let category = normalize_entity_file_category(
+            file_category.as_deref().unwrap_or("input"),
+        )?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/files/{}/{}?file_category={}",
+            dataset_id,
+            entity_id,
+            urlencoding::encode(&category)
+        );
+        let parts = resolve_entity_file_sources(client, &file_paths)?;
+        if parts.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "file_paths must resolve to at least one file",
+            ));
+        }
+        for (bytes, name) in &parts {
+            let size = bytes.len() as u64;
+            if size == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "entity file is empty: {}",
+                    name
+                )));
+            }
+            if size > ENTITY_FILE_MAX_BYTES {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "entity file '{}' exceeds maximum upload size ({}). Max is {}.",
+                    name,
+                    upload_limits::format_bytes(size),
+                    upload_limits::format_bytes(ENTITY_FILE_MAX_BYTES),
+                )));
+            }
+        }
+        client.submit_multipart_files("POST", endpoint, parts, Some(token))
+    }
+
+    /// `DELETE /datasets/datasetEntities/files` — soft-delete entity files by ID list.
+    pub fn delete_dataset_entity_files<T: ApiClient>(
+        client: &T,
+        entity_file_ids: Vec<String>,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = "/data-micro-services/v2/datasets/datasetEntities/files".to_string();
+        let body = serde_json::json!(entity_file_ids).to_string();
+        client.make_request("DELETE".to_string(), endpoint, Some(body), Some(token))
+    }
+
+    // -----------------------------------------------------------------------
+    // Bulk entity upload
+    // -----------------------------------------------------------------------
+
+    /// `POST /datasets/datasetEntities/bulk/{dataset_id}` — start async bulk upload job.
+    ///
+    /// Limits (client): CSV ≤ 2 GB; archive `.zip` ≤ 50 GB. File is streamed from disk.
+    /// `archive_layout` required for `upload_type=archive` (`input_output` | `classes`).
+    /// `on_upload_progress(bytes_sent, total_bytes, percent)` mirrors FE transfer progress.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bulk_upload_dataset_entities<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        file_path: &str,
+        upload_type: &str,
+        labeling_algo: &str,
+        source: Option<String>,
+        dataset_schema: Option<serde_json::Value>,
+        bulk_split: Option<String>,
+        archive_layout: Option<String>,
+        strict: bool,
+        idempotency_key: Option<String>,
+        on_upload_progress: Option<PyObject>,
+        check_permission: bool,
+    ) -> PyResult<PyObject> {
+        if check_permission {
+            ensure_dataset_write(client, dataset_id)?;
+        }
+        let upload_type = upload_type.trim().to_ascii_lowercase();
+        if upload_type != "archive" && upload_type != "csv" {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "upload_type must be 'archive' or 'csv'",
+            ));
+        }
+        let algo = labeling_algo.trim();
+        if algo.is_empty() || algo.eq_ignore_ascii_case("none") {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "labeling_algo is required and cannot be empty or 'none'",
+            ));
+        }
+        if let Some(ref s) = source {
+            upload_limits::validate_source(s)?;
+        }
+        let path = Path::new(file_path);
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let (max_bytes, kind) = if upload_type == "archive" {
+            if ext != "zip" {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "upload_type 'archive' requires a .zip file",
+                ));
+            }
+            let layout = archive_layout.as_deref().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "archive_layout is required for upload_type='archive' ('input_output' or 'classes')",
+                )
+            })?;
+            let layout = upload_limits::normalize_archive_layout(layout)?;
+            upload_limits::validate_archive_dataset_schema(
+                &layout,
+                dataset_schema.as_ref(),
+            )?;
+            (BULK_ARCHIVE_MAX_BYTES, "bulk archive")
+        } else {
+            if ext != "csv" {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "upload_type 'csv' requires a .csv file",
+                ));
+            }
+            (BULK_CSV_MAX_BYTES, "bulk CSV")
+        };
+        upload_limits::validate_upload_file(path, max_bytes, kind)?;
+
+        let mut sources = serde_json::Map::new();
+        sources.insert("uploadType".to_string(), serde_json::json!(upload_type));
+        sources.insert("labelingAlgo".to_string(), serde_json::json!(algo));
+        if let Some(s) = source {
+            sources.insert("source".to_string(), serde_json::json!(s));
+        }
+        // Omit datasetSchema when unset so BE can fall back to dataset fields
+        // (sending {} is falsy server-side and yields 422 "Schema is necessary.").
+        if let Some(schema) = dataset_schema
+            && !schema.is_null()
+            && !(schema.is_object()
+                && schema.as_object().map(|o| o.is_empty()).unwrap_or(false))
+        {
+            sources.insert("datasetSchema".to_string(), schema);
+        }
+        if let Some(split) = bulk_split {
+            sources.insert(
+                "bulkSplit".to_string(),
+                serde_json::json!(upload_limits::normalize_bulk_split(&split)?),
+            );
+        }
+        if let Some(layout) = archive_layout {
+            sources.insert(
+                "archiveLayout".to_string(),
+                serde_json::json!(upload_limits::normalize_archive_layout(&layout)?),
+            );
+        }
+        let sources_json = serde_json::Value::Object(sources).to_string();
+
+        let key = idempotency_key.unwrap_or_else(uuid_v4_simple);
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/{}?strict={}",
+            dataset_id, strict
+        );
+        let headers = vec![("X-Idempotency-Key".to_string(), key)];
+        client.submit_bulk_upload(
+            endpoint,
+            sources_json,
+            file_path.to_string(),
+            headers,
+            Some(client.require_token()?),
+            on_upload_progress,
+        )
+    }
+
+    /// `GET /datasets/datasetEntities/bulk/jobs/{job_id}?datasetId=` → [`BulkUploadJob`].
+    pub fn get_bulk_upload_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+    ) -> PyResult<Py<BulkUploadJob>> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs/{}?datasetId={}",
+            job_id, dataset_id
+        );
+        let obj = client.make_request("GET".to_string(), endpoint, None, Some(token))?;
+        pyobject_to_bulk_job(obj)
+    }
+
+    /// `GET /datasets/datasetEntities/bulk/jobs?datasetId=`
+    pub fn list_bulk_upload_jobs<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs?datasetId={}",
+            dataset_id
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `DELETE /datasets/datasetEntities/bulk/jobs/{job_id}?datasetId=`
+    pub fn cancel_bulk_upload_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs/{}?datasetId={}",
+            job_id, dataset_id
+        );
+        client.make_request("DELETE".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `DELETE /datasets/datasetEntities/bulk/jobs/stale?datasetId=`
+    pub fn cancel_stale_bulk_upload_jobs<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs/stale?datasetId={}",
+            dataset_id
+        );
+        client.make_request("DELETE".to_string(), endpoint, None, Some(token))
+    }
+
+    /// Poll until job reaches a terminal status (`completed` / `failed` / `cancelled`) or timeout.
+    ///
+    /// `on_progress`: optional callable receiving the current [`BulkUploadJob`] each poll
+    /// (use `job.percent`, `job.status`, `job.phase` like the React progress panel).
+    pub fn wait_for_bulk_upload_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+        poll_interval_secs: Option<f64>,
+        timeout_secs: Option<f64>,
+        on_progress: Option<PyObject>,
+    ) -> PyResult<Py<BulkUploadJob>> {
+        let interval = poll_interval_secs.unwrap_or(2.0).max(0.2);
+        let timeout = timeout_secs.unwrap_or(600.0);
+        let start = std::time::Instant::now();
+        loop {
+            let job = Self::get_bulk_upload_job(client, dataset_id, job_id)?;
+            if let Some(ref cb) = on_progress {
+                Python::with_gil(|py| {
+                    let bound = job.bind(py);
+                    let _ = cb.bind(py).call1((bound.clone(),));
+                });
+            }
+            let terminal = Python::with_gil(|py| {
+                job.bind(py).call_method0("is_terminal")?.extract::<bool>()
+            })?;
+            if terminal {
+                return Ok(job);
+            }
+            if start.elapsed().as_secs_f64() >= timeout {
+                return Err(PyErr::new::<pyo3::exceptions::PyTimeoutError, _>(format!(
+                    "Timed out waiting for bulk upload job {} after {}s",
+                    job_id, timeout
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_secs_f64(interval));
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Dataset version management
     // -----------------------------------------------------------------------
@@ -1568,7 +1910,7 @@ tf_dataset = tf.data.Dataset.from_generator(
 
     /// `POST /datasets/versions/publish/{dataset_id}/{version_no}` — publish a version.
     ///
-    /// `publish_type`: 0 = Private, 1 = Internal, 2 = Public.
+    /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
     pub fn publish_dataset_version<T: ApiClient>(
         client: &T,
         dataset_id: i32,
@@ -1582,6 +1924,343 @@ tf_dataset = tf.data.Dataset.from_generator(
         );
         client.make_request("POST".to_string(), endpoint, None, Some(token))
     }
+
+    /// `PUT /datasets/versions/{dataset_id}/{version_no}` — recover a soft-deleted version.
+    pub fn recover_dataset_version<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        version_no: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/versions/{}/{}",
+            dataset_id, version_no
+        );
+        client.make_request("PUT".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `PATCH /datasets/versions/refresh/{dataset_id}/{version_no}` — rebuild version archive.
+    pub fn refresh_dataset_version<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        version_no: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/versions/refresh/{}/{}",
+            dataset_id, version_no
+        );
+        client.make_request("PATCH".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `POST /datasets/datasetEntities/bulk/jobs/{job_id}/retry?datasetId=`
+    pub fn retry_bulk_upload_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+        sources_json: String,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs/{}/retry?datasetId={}",
+            job_id, dataset_id
+        );
+        client.make_request("POST".to_string(), endpoint, Some(sources_json), Some(token))
+    }
+
+    /// `POST /datasets/datasetEntities/mark-labeled/{dataset_id}`
+    pub fn mark_dataset_entities_labeled<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        dataset_entity_ids: Vec<String>,
+        remark: Option<String>,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/mark-labeled/{}",
+            dataset_id
+        );
+        let mut body = serde_json::json!({ "datasetEntityIds": dataset_entity_ids });
+        if let Some(r) = remark {
+            body["remark"] = serde_json::json!(r);
+        }
+        client.make_request(
+            "POST".to_string(),
+            endpoint,
+            Some(body.to_string()),
+            Some(token),
+        )
+    }
+
+    /// `GET /datasets/datasetEntities/files/{dataset_id}/{file_id}` — download entity file bytes to path.
+    pub fn download_dataset_entity_file<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        file_id: &str,
+        dest_path: &str,
+        as_attachment: bool,
+    ) -> PyResult<String> {
+        let token = client.require_token()?;
+        let mut endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/files/{}/{}",
+            dataset_id, file_id
+        );
+        if as_attachment {
+            endpoint.push_str("?download=true");
+        }
+        let bytes = client.download_bytes(endpoint, Some(token))?;
+        if let Some(parent) = Path::new(dest_path).parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                    "Failed to create parent dir for {}: {}",
+                    dest_path, e
+                ))
+            })?;
+        }
+        fs::write(dest_path, bytes).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Failed to write {}: {}",
+                dest_path, e
+            ))
+        })?;
+        Ok(dest_path.to_string())
+    }
+
+    // -----------------------------------------------------------------------
+    // Tabular custom schema
+    // -----------------------------------------------------------------------
+
+    pub fn get_dataset_custom_schema<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        schema_kind: Option<String>,
+    ) -> PyResult<PyObject> {
+        let kind = schema_kind.unwrap_or_else(|| "tabular".to_string());
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/{}/custom-schema?schemaKind={}",
+            dataset_id,
+            urlencoding::encode(&kind)
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
+    }
+
+    pub fn put_dataset_custom_schema<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        body_json: String,
+    ) -> PyResult<PyObject> {
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/{}/custom-schema",
+            dataset_id
+        );
+        client.make_request(
+            "PUT".to_string(),
+            endpoint,
+            Some(body_json),
+            Some(client.require_token()?),
+        )
+    }
+
+    pub fn lock_dataset_custom_schema<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        schema_kind: Option<String>,
+    ) -> PyResult<PyObject> {
+        let kind = schema_kind.unwrap_or_else(|| "tabular".to_string());
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/{}/custom-schema/lock?schemaKind={}",
+            dataset_id,
+            urlencoding::encode(&kind)
+        );
+        client.make_request("POST".to_string(), endpoint, None, Some(client.require_token()?))
+    }
+
+    pub fn unlock_dataset_custom_schema<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        schema_kind: Option<String>,
+    ) -> PyResult<PyObject> {
+        let kind = schema_kind.unwrap_or_else(|| "tabular".to_string());
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/{}/custom-schema/unlock-for-upgrade?schemaKind={}",
+            dataset_id,
+            urlencoding::encode(&kind)
+        );
+        client.make_request("POST".to_string(), endpoint, None, Some(client.require_token()?))
+    }
+
+    pub fn infer_dataset_custom_schema<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        csv_content: String,
+        sample_rows: Option<i32>,
+    ) -> PyResult<PyObject> {
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/{}/custom-schema/infer",
+            dataset_id
+        );
+        let body = serde_json::json!({
+            "csvContent": csv_content,
+            "sampleRows": sample_rows.unwrap_or(100),
+        })
+        .to_string();
+        client.make_request(
+            "POST".to_string(),
+            endpoint,
+            Some(body),
+            Some(client.require_token()?),
+        )
+    }
+
+    pub fn add_dataset_custom_schema_column<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        body_json: String,
+        schema_kind: Option<String>,
+    ) -> PyResult<PyObject> {
+        let kind = schema_kind.unwrap_or_else(|| "tabular".to_string());
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/{}/custom-schema/columns?schemaKind={}",
+            dataset_id,
+            urlencoding::encode(&kind)
+        );
+        client.make_request(
+            "POST".to_string(),
+            endpoint,
+            Some(body_json),
+            Some(client.require_token()?),
+        )
+    }
+}
+
+fn pyobject_to_bulk_job(obj: PyObject) -> PyResult<Py<BulkUploadJob>> {
+    let value = crate::utils::python_json::pyobject_to_rust_value(&obj, "bulk upload job")?;
+    Python::with_gil(|py| Py::new(py, BulkUploadJob::from_json_value(value)))
+}
+
+fn validate_entity_file_parts(parts: &[(Vec<u8>, String)]) -> PyResult<()> {
+    for (bytes, name) in parts {
+        let size = bytes.len() as u64;
+        if size == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "entity file is empty: {}",
+                name
+            )));
+        }
+        if size > ENTITY_FILE_MAX_BYTES {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "entity file '{}' exceeds maximum upload size ({}). Max is {}.",
+                name,
+                upload_limits::format_bytes(size),
+                upload_limits::format_bytes(ENTITY_FILE_MAX_BYTES),
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Soft RBAC gate: require `dataset.write` (or global equivalent) when requested.
+fn ensure_dataset_write<T: ApiClient>(client: &T, dataset_id: i32) -> PyResult<()> {
+    if !crate::users::users::Users::has_permission(client, "dataset.write", Some(dataset_id), None)? {
+        return Err(PyErr::new::<pyo3::exceptions::PyPermissionError, _>(format!(
+            "Missing permission 'dataset.write' for dataset {}. \
+             Call get_my_permissions(dataset_id={}) to see allowed actions.",
+            dataset_id, dataset_id
+        )));
+    }
+    Ok(())
+}
+
+/// Filter dataset items by `entity_info.split` (missing split counts as `train`).
+fn filter_items_by_splits(
+    items: Vec<DatasetItem>,
+    splits: Option<&Vec<String>>,
+) -> PyResult<Vec<DatasetItem>> {
+    let Some(wanted) = splits else {
+        return Ok(items);
+    };
+    if wanted.is_empty() {
+        return Ok(items);
+    }
+    let set: std::collections::HashSet<String> = wanted
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if set.is_empty() {
+        return Ok(items);
+    }
+    Ok(items
+        .into_iter()
+        .filter(|item| set.contains(&entity_split_from_info(item.entity_info.as_ref())))
+        .collect())
+}
+
+/// Inject `filesCategory` / `dsEntityInfo.split` into entity create/update JSON.
+fn prepare_entity_payload_json(
+    entity_json: &str,
+    filenames: &[String],
+    file_category: Option<&str>,
+    split: Option<&str>,
+) -> PyResult<String> {
+    let mut value: serde_json::Value = serde_json::from_str(entity_json).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid entity JSON: {}", e))
+    })?;
+    let obj = value.as_object_mut().ok_or_else(|| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>("Entity payload must be a JSON object")
+    })?;
+
+    if !filenames.is_empty() {
+        let has_files_category = obj
+            .get("filesCategory")
+            .map(|v| !v.is_null())
+            .unwrap_or(false);
+        if !has_files_category || file_category.is_some() {
+            let cat = normalize_entity_file_category(file_category.unwrap_or("input"))?;
+            let mut map = serde_json::Map::new();
+            for name in filenames {
+                map.insert(name.clone(), serde_json::json!(cat));
+            }
+            // Merge over any existing map when file_category was explicitly provided.
+            if let Some(existing) = obj.get("filesCategory").and_then(|v| v.as_object()) {
+                if file_category.is_none() {
+                    // Keep caller-supplied filesCategory.
+                } else {
+                    let mut merged = existing.clone();
+                    for (k, v) in map {
+                        merged.insert(k, v);
+                    }
+                    obj.insert("filesCategory".to_string(), serde_json::Value::Object(merged));
+                }
+            } else {
+                obj.insert("filesCategory".to_string(), serde_json::Value::Object(map));
+            }
+        }
+    } else if let Some(cat) = file_category {
+        // Validate even when no files (caller mistake) so typos fail fast.
+        let _ = normalize_entity_file_category(cat)?;
+    }
+
+    if let Some(split_raw) = split {
+        let normalized = normalize_entity_split(split_raw)?;
+        let info = obj
+            .entry("dsEntityInfo".to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(info_obj) = info.as_object_mut() {
+            info_obj.insert("split".to_string(), serde_json::json!(normalized));
+        } else {
+            *info = serde_json::json!({ "split": normalized });
+        }
+    }
+
+    serde_json::to_string(&value).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Failed to serialize entity payload: {}",
+            e
+        ))
+    })
 }
 
 /// Collect immediate child files of a directory (non-recursive), sorted by path.
@@ -1613,6 +2292,22 @@ fn guess_filename_from_url(url: &str) -> String {
             }
         })
         .unwrap_or_else(|| "download".to_string())
+}
+
+/// Simple UUID v4 hex string for idempotency keys (no extra crate).
+fn uuid_v4_simple() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11],
+        bytes[12], bytes[13], bytes[14], bytes[15]
+    )
 }
 
 /// Resolve user-supplied paths and URLs into `(bytes, filename)` pairs for multipart `files` parts.

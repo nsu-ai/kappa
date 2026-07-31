@@ -64,6 +64,47 @@ python upload_torchvision_to_kappa_example.py --dataset fashion_mnist \
 python3 code_examples/http_client_authentication_example.py
 ```
 
+### `bulk_upload.py`
+
+**Purpose**: Async bulk entity upload (CSV ≤ 2 GB client / BE default 50 MB, or zip ≤ 50 GB) with transfer % and job polling (`BulkUploadJob`). Requires Kappa-framework **≥ 2.10.0**.
+
+Archive `input_output` needs `dataset_schema.inputDataPath` (use `--input-data-path`).
+
+```bash
+source code_examples/.venv/bin/activate
+export KAPPA_URL=http://127.0.0.1:8060
+export KAPPA_USER=admin
+export KAPPA_PASSWORD='***'
+python code_examples/bulk_upload.py --dataset-id 42 --file ./data.zip \
+  --upload-type archive --archive-layout input_output --input-data-path input
+```
+
+### `dataset_operations_example.py`
+
+**Purpose**: End-to-end dataset scripting flow — create/lookup dataset, labels, single entity (`file_category` + `split`), filter, version, optional publish, RBAC check.
+
+```bash
+source code_examples/.venv/bin/activate
+export KAPPA_URL=http://127.0.0.1:8060
+export KAPPA_USER=admin
+export KAPPA_PASSWORD='***'
+python code_examples/dataset_operations_example.py \
+  --dataset-name apk-demo-dataset --image ./sample.jpg
+```
+
+### `dataset_lifecycle_example.py`
+
+**Purpose**: Lifecycle ops on an existing dataset — filter/list, custom schema, mark-labeled, soft-delete/recover entities (and optional dataset), version refresh/recover, entity file download.
+
+```bash
+source code_examples/.venv/bin/activate
+export KAPPA_URL=http://127.0.0.1:8060
+export KAPPA_USER=admin
+export KAPPA_PASSWORD='***'
+python code_examples/dataset_lifecycle_example.py --dataset-name apk-demo-dataset \
+  --mark-labeled --soft-delete-entity --recover-entity
+```
+
 ## Directory Structure
 
 ```
@@ -73,6 +114,9 @@ code_examples/
 ├── upload_torchvision_to_kappa_example.py
 ├── upload_kappa_helpers.py
 ├── http_client_authentication_example.py
+├── bulk_upload.py                       # Bulk upload + job progress (Kappa ≥ 2.10)
+├── dataset_operations_example.py        # Dataset CUD → entities → version flow
+├── dataset_lifecycle_example.py         # Schema, mark-labeled, soft-delete/recover
 ├── setup_venv.sh
 ├── upgrade_venv.sh
 ├── requirements.txt

@@ -39,6 +39,62 @@ pub trait ApiClient {
         ))
     }
 
+    /// Multipart upload of `files` parts only (optional query string already in endpoint).
+    fn submit_multipart_files(
+        &self,
+        _method: &str,
+        _endpoint: String,
+        _file_parts: Vec<(Vec<u8>, String)>,
+        _token: Option<String>,
+    ) -> PyResult<PyObject> {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This ApiClient does not support multipart file upload",
+        ))
+    }
+
+    /// Bulk entity upload: multipart `sources` (JSON text) + streamed `file` from disk.
+    ///
+    /// `on_upload_progress`: optional callable `(bytes_sent: int, total_bytes: int, percent: int)`.
+    fn submit_bulk_upload(
+        &self,
+        _endpoint: String,
+        _sources_json: String,
+        _file_path: String,
+        _headers: Vec<(String, String)>,
+        _token: Option<String>,
+        _on_upload_progress: Option<PyObject>,
+    ) -> PyResult<PyObject> {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This ApiClient does not support bulk upload",
+        ))
+    }
+
+    /// Authenticated binary download (artifact ZIP, entity file, etc.).
+    fn download_bytes(
+        &self,
+        _endpoint: String,
+        _token: Option<String>,
+    ) -> PyResult<Vec<u8>> {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This ApiClient does not support binary download",
+        ))
+    }
+
+    /// Multipart upload with a single named file field (e.g. model inference `file`).
+    fn submit_named_file(
+        &self,
+        _method: &str,
+        _endpoint: String,
+        _field_name: &str,
+        _file_bytes: Vec<u8>,
+        _file_name: String,
+        _token: Option<String>,
+    ) -> PyResult<PyObject> {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "This ApiClient does not support named file upload",
+        ))
+    }
+
     fn is_authenticated(&self) -> bool {
         self.get_token().is_some()
     }
