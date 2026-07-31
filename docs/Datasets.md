@@ -83,6 +83,66 @@ page = client.filter_dataset_entities(42, entity_name="sample", page=0, size=20)
 client.delete_dataset_entities(["uuid-1", "uuid-2"], remark="Duplicates removed")
 ```
 
+Pass `file_category="input"|"output"` and optional `split="train"|"validation"|"test"` on create/update. Single entity files are capped at **2 GB** each.
+
+---
+
+## Bulk upload (requires Kappa ≥ 2.10.0)
+
+Async job API — same flow as the React bulk dialog. Full script: [`code_examples/bulk_upload.py`](../code_examples/bulk_upload.py).
+
+| Upload | Max size | Notes |
+|---|---|---|
+| CSV | **2 GB** | `upload_type="csv"` |
+| Archive `.zip` | **50 GB** | `upload_type="archive"` + `archive_layout` |
+
+`archive_layout` must be `input_output` or `classes`. The file is **streamed** from disk (not loaded fully into RAM).
+
+```python
+from kappa_apk import compatibility_info, min_backend_version
+
+print(min_backend_version())   # "2.10.0"
+print(compatibility_info())
+
+# Optional RBAC check (also available via check_permission=True on upload)
+if not client.has_permission("dataset.write", dataset_id=42):
+    print(client.get_my_permissions(dataset_id=42))
+    raise SystemExit("no write access")
+
+def on_upload(sent, total, percent):
+    print(f"transfer {percent}%")
+
+start = client.bulk_upload_dataset_entities(
+    dataset_id=42,
+    file_path="/data/entities.zip",
+    upload_type="archive",
+    labeling_algo="default",
+    source="lab-batch-1",
+    archive_layout="input_output",  # or "classes"
+    strict=True,
+    on_upload_progress=on_upload,
+)
+job_id = start["jobId"]
+
+def on_job(job):
+    # BulkUploadJob: status, phase, processed_rows, total_rows, percent, can_retry, …
+    print(job.status, job.phase, job.percent, f"{job.processed_rows}/{job.total_rows}")
+
+final = client.wait_for_bulk_upload_job(
+    42, job_id, poll_interval_secs=2, timeout_secs=3600, on_progress=on_job
+)
+print(final.status, final.can_retry, final.as_dict())
+
+# Or poll manually:
+job = client.get_bulk_upload_job(42, job_id)
+if job.is_terminal():
+    print(job.status)
+```
+
+Helpers: `list_bulk_upload_jobs`, `cancel_bulk_upload_job`, `retry_bulk_upload_job`, `cancel_stale_bulk_upload_jobs`.
+
+HTTP **403** raises `PermissionError` with a hint to inspect permissions. **429** means admission control — retry later.
+
 ---
 
 ## Versions

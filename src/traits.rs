@@ -52,15 +52,17 @@ pub trait ApiClient {
         ))
     }
 
-    /// Bulk entity upload: multipart `sources` (JSON text) + `file` + optional headers.
+    /// Bulk entity upload: multipart `sources` (JSON text) + streamed `file` from disk.
+    ///
+    /// `on_upload_progress`: optional callable `(bytes_sent: int, total_bytes: int, percent: int)`.
     fn submit_bulk_upload(
         &self,
         _endpoint: String,
         _sources_json: String,
-        _file_bytes: Vec<u8>,
-        _file_name: String,
+        _file_path: String,
         _headers: Vec<(String, String)>,
         _token: Option<String>,
+        _on_upload_progress: Option<PyObject>,
     ) -> PyResult<PyObject> {
         Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
             "This ApiClient does not support bulk upload",

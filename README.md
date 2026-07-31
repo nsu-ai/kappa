@@ -14,6 +14,7 @@ Python-клиент SDK для **Kappa-framework** — самостоятель�
 | | |
 |---|---|
 | **Версия** | 3.0.1 |
+| **Требует Kappa** | **≥ 2.10.0** (`min_backend_version()`) |
 | **Python** | 3.9+ |
 | **Rust edition** | 2024 |
 | **Лицензия** | BSD-3-Clause ([LICENSE.md](LICENSE.md)) |

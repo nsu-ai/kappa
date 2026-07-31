@@ -1,7 +1,8 @@
 # kf-sdk documentation (`import kappa_apk`)
 
 > **PyPI:** `kf-sdk` · **Import:** `kappa_apk` · **Version:** 3.0.1 · **Branch:** `main`  
-> **Python:** 3.9+ · **API:** Kappa-framework **v2** (JWT identity — no `user_id` / `user_type_id` in URLs)
+> **Python:** 3.9+ · **API:** Kappa-framework **v2** (JWT identity — no `user_id` / `user_type_id` in URLs)  
+> **Requires backend:** Kappa-framework **≥ 2.10.0** (`kappa_apk.min_backend_version()`)
 >
 > The PyPI name **`kf-sdk`** is kept for continuity with earlier releases; the import module is intentionally **`kappa_apk`**.
 
@@ -18,10 +19,11 @@ Python client for the [Kappa-framework](https://github.com/nsu-ai/kappa) ML plat
 | [GettingStarted.md](GettingStarted.md) | Install, gateway setup, first script |
 | [KappaApkClient.md](KappaApkClient.md) | Full client method reference + v2 HTTP paths |
 | [DataModels.md](DataModels.md) | Request/response types (`Dataset`, `NewDataset`, …) |
-| [Datasets.md](Datasets.md) | CRUD, labels, entities, versions, download & cache |
+| [Datasets.md](Datasets.md) | CRUD, labels, entities, **bulk upload / jobs**, versions, download & cache |
 | [LoadersAndTransforms.md](LoadersAndTransforms.md) | `KappaDataset`, `KappaDataLoader`, vision/text/audio transforms |
 | [Benchmarks.md](Benchmarks.md) | Benchmark workflow + `BenchmarkVerification` |
 | [BuildAndPublish.md](BuildAndPublish.md) | Local wheels, cibuildwheel, PyPI / CI |
+| [`code_examples/bulk_upload.py`](../code_examples/bulk_upload.py) | Bulk upload + transfer % + job progress |
 
 ---
 

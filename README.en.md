@@ -14,6 +14,7 @@ Built with Rust + [PyO3](https://pyo3.rs). **PyPI:** `kf-sdk` · **import:** `im
 | | |
 |---|---|
 | **Version** | 3.0.1 |
+| **Requires Kappa** | **≥ 2.10.0** (`min_backend_version()`) |
 | **Python** | 3.9+ |
 | **Rust edition** | 2024 |
 | **License** | BSD-3-Clause ([LICENSE.md](LICENSE.md)) |

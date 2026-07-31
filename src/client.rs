@@ -14,8 +14,8 @@ use crate::benchmarks::benchmarks::Benchmarks;
 use crate::models::users_model::User;
 use crate::models::login_models::LoginRequest;
 use crate::models::datasets_model::{
-    DatasetDownloadDetails, DatasetLabel, DatasetVersionDetails, NewDataset, NewDatasetEntity,
-    NewDatasetVersion, UpdateDatasetEntity, UpdateDatasetRequest,
+    BulkUploadJob, DatasetDownloadDetails, DatasetLabel, DatasetVersionDetails, NewDataset,
+    NewDatasetEntity, NewDatasetVersion, UpdateDatasetEntity, UpdateDatasetRequest,
 };
 use crate::utils::python_json::{json_value_to_pyobject, rust_value_to_pyobject};
 use crate::users::users::Users;
@@ -291,21 +291,71 @@ impl ApiClient for KappaApkClient {
         &self,
         endpoint: String,
         sources_json: String,
-        file_bytes: Vec<u8>,
-        file_name: String,
+        file_path: String,
         headers: Vec<(String, String)>,
         token: Option<String>,
+        on_upload_progress: Option<PyObject>,
     ) -> PyResult<PyObject> {
+        use futures_util::StreamExt;
+        use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+        use std::sync::Arc;
+        use tokio_util::io::ReaderStream;
+
         let url = format!("{}{}", self.base_url, endpoint);
         let http = self.client.clone();
+        let path = std::path::PathBuf::from(&file_path);
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload.bin")
+            .to_string();
+        let total = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let progress_cb = on_upload_progress.map(Arc::new);
 
         self.runtime.block_on(async move {
-            let file_part = multipart::Part::bytes(file_bytes)
+            let file = tokio::fs::File::open(&path).await.map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                    "Cannot open {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+            let reader = ReaderStream::new(file);
+            let sent = Arc::new(AtomicU64::new(0));
+            let last_pct = Arc::new(AtomicI32::new(-1));
+            let sent2 = sent.clone();
+            let last2 = last_pct.clone();
+            let cb2 = progress_cb.clone();
+            let total2 = total;
+
+            let stream = reader.map(move |chunk| match chunk {
+                Ok(bytes) => {
+                    let n = bytes.len() as u64;
+                    let cur = sent2.fetch_add(n, Ordering::Relaxed) + n;
+                    let pct = if total2 > 0 {
+                        (((cur as f64) * 100.0) / (total2 as f64)).round() as i32
+                    } else {
+                        0
+                    }
+                    .clamp(0, 100);
+                    let prev_pct = last2.swap(pct, Ordering::Relaxed);
+                    if pct != prev_pct || cur >= total2 {
+                        if let Some(ref cb) = cb2 {
+                            Python::with_gil(|py| {
+                                let _ = cb.bind(py).call1((cur, total2, pct));
+                            });
+                        }
+                    }
+                    Ok::<_, std::io::Error>(bytes)
+                }
+                Err(e) => Err(e),
+            });
+
+            let body = reqwest::Body::wrap_stream(stream);
+            let file_part = multipart::Part::stream(body)
                 .file_name(file_name)
                 .mime_str("application/octet-stream")
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
-                })?;
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             let form = multipart::Form::new()
                 .text("sources", sources_json)
                 .part("file", file_part);
@@ -320,20 +370,25 @@ impl ApiClient for KappaApkClient {
             }
 
             let response = request.send().await.map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyConnectionError, _>(
-                    format!("Request failed: {}", e),
-                )
+                PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
+                    "Request failed: {}",
+                    e
+                ))
             })?;
 
             if response.status().is_success() {
                 let json_data: serde_json::Value = response.json().await.map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Failed to parse response: {}", e),
-                    )
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to parse response: {}",
+                        e
+                    ))
                 })?;
                 Python::with_gil(|py| json_value_to_pyobject(py, &json_data))
             } else {
-                Err(http_error_to_pyerr(response.status(), response.text().await.unwrap_or_default()))
+                Err(http_error_to_pyerr(
+                    response.status(),
+                    response.text().await.unwrap_or_default(),
+                ))
             }
         })
     }
@@ -453,6 +508,18 @@ fn http_error_to_pyerr(status: reqwest::StatusCode, text: String) -> PyErr {
     // 409 conflicts (e.g. dataset used in benchmarks, wrong dataset status)
     if status.as_u16() == 409 {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(msg)
+    } else if status.as_u16() == 403 {
+        PyErr::new::<pyo3::exceptions::PyPermissionError, _>(format!(
+            "{}. Hint: call client.get_my_permissions(dataset_id=...) or has_permission('dataset.write', dataset_id=...).",
+            msg
+        ))
+    } else if status.as_u16() == 401 {
+        PyErr::new::<pyo3::exceptions::PyPermissionError, _>(msg)
+    } else if status.as_u16() == 429 {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "{} (server busy — retry after Retry-After / retryAfterSeconds)",
+            msg
+        ))
     } else {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
     }
@@ -756,6 +823,27 @@ impl KappaApkClient {
     /// Get the authenticated user's profile (`GET /user-micro-services/v2/users/me`).
     pub fn get_user_profile(&self) -> PyResult<User> {
         Users::get_user_profile(self)
+    }
+
+    /// Effective permissions (`GET /users/me/permissions`), optionally scoped.
+    #[pyo3(signature = (dataset_id=None, org_id=None))]
+    pub fn get_my_permissions(
+        &self,
+        dataset_id: Option<i32>,
+        org_id: Option<i32>,
+    ) -> PyResult<PyObject> {
+        Users::get_my_permissions(self, dataset_id, org_id)
+    }
+
+    /// Whether `code` (e.g. ``dataset.write``) is granted for the optional scopes.
+    #[pyo3(signature = (code, dataset_id=None, org_id=None))]
+    pub fn has_permission(
+        &self,
+        code: String,
+        dataset_id: Option<i32>,
+        org_id: Option<i32>,
+    ) -> PyResult<bool> {
+        Users::has_permission(self, &code, dataset_id, org_id)
     }
 
     /// List datasets for the current user (paginated, raw JSON dict).
@@ -1148,14 +1236,15 @@ impl KappaApkClient {
 
     /// Upload additional files onto an existing entity.
     ///
-    /// `file_category`: ``"input"`` (default) or ``"output"``.
-    #[pyo3(signature = (dataset_id, entity_id, file_paths, file_category=None))]
+    /// `file_category`: ``"input"`` (default) or ``"output"``. Max 2 GB per file.
+    #[pyo3(signature = (dataset_id, entity_id, file_paths, file_category=None, check_permission=false))]
     pub fn upload_dataset_entity_files(
         &self,
         dataset_id: i32,
         entity_id: String,
         file_paths: Vec<String>,
         file_category: Option<String>,
+        check_permission: bool,
     ) -> PyResult<PyObject> {
         Datasets::upload_dataset_entity_files(
             self,
@@ -1163,6 +1252,7 @@ impl KappaApkClient {
             &entity_id,
             file_paths,
             file_category,
+            check_permission,
         )
     }
 
@@ -1175,7 +1265,25 @@ impl KappaApkClient {
     }
 
     /// Start an async bulk entity upload (`archive` zip or `csv`).
-    #[pyo3(signature = (dataset_id, file_path, upload_type, labeling_algo, source=None, dataset_schema=None, bulk_split=None, strict=true, idempotency_key=None))]
+    ///
+    /// * CSV max **2 GB**; archive `.zip` max **50 GB** (streamed from disk).
+    /// * `archive_layout` required for archive: ``input_output`` | ``classes``.
+    /// * `on_upload_progress(bytes_sent, total_bytes, percent)` — transfer % (FE parity).
+    /// * Returns start response dict with ``jobId``; poll with [`Self::get_bulk_upload_job`].
+    #[pyo3(signature = (
+        dataset_id,
+        file_path,
+        upload_type,
+        labeling_algo,
+        source=None,
+        dataset_schema=None,
+        bulk_split=None,
+        archive_layout=None,
+        strict=true,
+        idempotency_key=None,
+        on_upload_progress=None,
+        check_permission=false
+    ))]
     #[allow(clippy::too_many_arguments)]
     pub fn bulk_upload_dataset_entities(
         &self,
@@ -1186,8 +1294,11 @@ impl KappaApkClient {
         source: Option<String>,
         dataset_schema: Option<&Bound<'_, PyAny>>,
         bulk_split: Option<String>,
+        archive_layout: Option<String>,
         strict: bool,
         idempotency_key: Option<String>,
+        on_upload_progress: Option<PyObject>,
+        check_permission: bool,
     ) -> PyResult<PyObject> {
         let schema = match dataset_schema {
             Some(v) => {
@@ -1210,13 +1321,20 @@ impl KappaApkClient {
             source,
             schema,
             bulk_split,
+            archive_layout,
             strict,
             idempotency_key,
+            on_upload_progress,
+            check_permission,
         )
     }
 
-    /// Get bulk upload job status.
-    pub fn get_bulk_upload_job(&self, dataset_id: i32, job_id: String) -> PyResult<PyObject> {
+    /// Get bulk upload job status as a [`BulkUploadJob`] (use `.percent`, `.status`, `.phase`).
+    pub fn get_bulk_upload_job(
+        &self,
+        dataset_id: i32,
+        job_id: String,
+    ) -> PyResult<Py<BulkUploadJob>> {
         Datasets::get_bulk_upload_job(self, dataset_id, &job_id)
     }
 
@@ -1236,20 +1354,24 @@ impl KappaApkClient {
     }
 
     /// Poll until bulk upload job finishes or times out.
-    #[pyo3(signature = (dataset_id, job_id, poll_interval_secs=None, timeout_secs=None))]
+    ///
+    /// `on_progress(job: BulkUploadJob)` is called each poll (job-side %, like the React panel).
+    #[pyo3(signature = (dataset_id, job_id, poll_interval_secs=None, timeout_secs=None, on_progress=None))]
     pub fn wait_for_bulk_upload_job(
         &self,
         dataset_id: i32,
         job_id: String,
         poll_interval_secs: Option<f64>,
         timeout_secs: Option<f64>,
-    ) -> PyResult<PyObject> {
+        on_progress: Option<PyObject>,
+    ) -> PyResult<Py<BulkUploadJob>> {
         Datasets::wait_for_bulk_upload_job(
             self,
             dataset_id,
             &job_id,
             poll_interval_secs,
             timeout_secs,
+            on_progress,
         )
     }
 

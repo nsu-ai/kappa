@@ -64,6 +64,19 @@ python upload_torchvision_to_kappa_example.py --dataset fashion_mnist \
 python3 code_examples/http_client_authentication_example.py
 ```
 
+### `bulk_upload.py`
+
+**Purpose**: Async bulk entity upload (CSV ≤ 2 GB or zip ≤ 50 GB) with transfer % and job polling (`BulkUploadJob`). Requires Kappa-framework **≥ 2.10.0**.
+
+```bash
+source code_examples/.venv/bin/activate
+export KAPPA_URL=http://127.0.0.1:8060
+export KAPPA_USER=admin
+export KAPPA_PASSWORD='***'
+python code_examples/bulk_upload.py --dataset-id 42 --file ./data.zip \
+  --upload-type archive --archive-layout input_output
+```
+
 ## Directory Structure
 
 ```
@@ -73,6 +86,7 @@ code_examples/
 ├── upload_torchvision_to_kappa_example.py
 ├── upload_kappa_helpers.py
 ├── http_client_authentication_example.py
+├── bulk_upload.py                       # Bulk upload + job progress (Kappa ≥ 2.10)
 ├── setup_venv.sh
 ├── upgrade_venv.sh
 ├── requirements.txt

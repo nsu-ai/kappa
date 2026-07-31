@@ -764,3 +764,175 @@ impl NewDatasetVersion {
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Bulk upload job status
+// ---------------------------------------------------------------------------
+
+/// Snapshot of a bulk-upload job (`GET …/bulk/jobs/{jobId}`).
+///
+/// Use [`BulkUploadJob::percent`], [`BulkUploadJob::is_terminal`], and
+/// [`BulkUploadJob::status`] to drive progress UIs (same fields as the React panel).
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct BulkUploadJob {
+    raw: serde_json::Value,
+}
+
+impl BulkUploadJob {
+    pub fn from_json_value(value: serde_json::Value) -> Self {
+        BulkUploadJob { raw: value }
+    }
+
+    fn str_field(&self, camel: &str, snake: &str) -> Option<String> {
+        self.raw
+            .get(camel)
+            .or_else(|| self.raw.get(snake))
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    Some(s.to_string())
+                } else if v.is_null() {
+                    None
+                } else {
+                    Some(v.to_string())
+                }
+            })
+    }
+
+    fn i64_field(&self, camel: &str, snake: &str) -> i64 {
+        self.raw
+            .get(camel)
+            .or_else(|| self.raw.get(snake))
+            .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|u| u as i64)))
+            .unwrap_or(0)
+    }
+
+    fn bool_field(&self, camel: &str, snake: &str) -> bool {
+        self.raw
+            .get(camel)
+            .or_else(|| self.raw.get(snake))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+}
+
+#[pymethods]
+impl BulkUploadJob {
+    #[getter]
+    fn job_id(&self) -> String {
+        self.str_field("jobId", "job_id").unwrap_or_default()
+    }
+
+    #[getter]
+    fn dataset_id(&self) -> i32 {
+        self.i64_field("datasetId", "dataset_id") as i32
+    }
+
+    #[getter]
+    fn upload_type(&self) -> String {
+        self.str_field("uploadType", "upload_type").unwrap_or_default()
+    }
+
+    #[getter]
+    fn status(&self) -> String {
+        self.str_field("status", "status").unwrap_or_default()
+    }
+
+    #[getter]
+    fn phase(&self) -> Option<String> {
+        self.str_field("phase", "phase")
+    }
+
+    #[getter]
+    fn total_rows(&self) -> i64 {
+        self.i64_field("totalRows", "total_rows")
+    }
+
+    #[getter]
+    fn processed_rows(&self) -> i64 {
+        self.i64_field("processedRows", "processed_rows")
+    }
+
+    /// Job processing percent (`processedRows / totalRows`), or `None` if total is 0.
+    #[getter]
+    fn percent(&self) -> Option<i32> {
+        let total = self.total_rows();
+        if total <= 0 {
+            return None;
+        }
+        let pct = ((self.processed_rows() as f64) * 100.0 / (total as f64)).round() as i32;
+        Some(pct.clamp(0, 100))
+    }
+
+    #[getter]
+    fn source(&self) -> Option<String> {
+        self.str_field("source", "source")
+    }
+
+    #[getter]
+    fn filename(&self) -> Option<String> {
+        self.str_field("filename", "filename")
+    }
+
+    #[getter]
+    fn failure_kind(&self) -> Option<String> {
+        self.str_field("failureKind", "failure_kind")
+    }
+
+    #[getter]
+    fn labeling_algo(&self) -> Option<String> {
+        self.str_field("labelingAlgo", "labeling_algo")
+    }
+
+    #[getter]
+    fn retryable(&self) -> bool {
+        self.bool_field("retryable", "retryable")
+    }
+
+    #[getter]
+    fn can_cancel(&self) -> bool {
+        self.bool_field("canCancel", "can_cancel")
+    }
+
+    #[getter]
+    fn can_retry(&self) -> bool {
+        self.bool_field("canRetry", "can_retry")
+    }
+
+    #[getter]
+    fn is_stale(&self) -> bool {
+        self.bool_field("isStale", "is_stale")
+    }
+
+    #[getter]
+    fn preflight_deferred(&self) -> bool {
+        self.bool_field("preflightDeferred", "preflight_deferred")
+    }
+
+    /// True when status is completed / failed / cancelled (case-insensitive).
+    fn is_terminal(&self) -> bool {
+        matches!(
+            self.status().to_ascii_lowercase().as_str(),
+            "completed" | "complete" | "failed" | "error" | "cancelled" | "canceled"
+        )
+    }
+
+    /// Full API payload as a Python dict.
+    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let json_str = serde_json::to_string(&self.raw).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+        })?;
+        let json_mod = py.import("json")?;
+        Ok(json_mod.call_method1("loads", (json_str,))?.into())
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BulkUploadJob(job_id={:?}, status={:?}, percent={:?}, phase={:?})",
+            self.job_id(),
+            self.status(),
+            self.percent(),
+            self.phase()
+        )
+    }
+}

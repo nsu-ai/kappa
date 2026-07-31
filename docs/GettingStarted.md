@@ -12,9 +12,14 @@ Then import the module (name differs from the PyPI package on purpose):
 
 ```python
 import kappa_apk
+print(kappa_apk.version())
+print(kappa_apk.min_backend_version())  # "2.10.0" — this SDK needs Kappa ≥ 2.10.0
+print(kappa_apk.compatibility_info())
 ```
 
 Wheels are published for **Linux (manylinux)**, **macOS** (Intel + Apple Silicon), and **Windows**, Python **3.9–3.13**.
+
+> **Backend dependency:** features such as bulk staging/retry, `archiveLayout`, entity `file_category`, and large archives require **Kappa-framework 2.10.0+**. Older gateways will fail in unclear ways on newer SDK calls.
 
 ### From source (development)
 

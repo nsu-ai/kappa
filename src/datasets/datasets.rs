@@ -22,6 +22,10 @@ use crate::models::datasets_model::{
     entity_split_from_info,
     normalize_entity_file_category,
     normalize_entity_split,
+    BulkUploadJob,
+};
+use crate::upload_limits::{
+    self, BULK_ARCHIVE_MAX_BYTES, ENTITY_OR_CSV_MAX_BYTES,
 };
 
 /// Default implementation of Datasets trait
@@ -1251,6 +1255,7 @@ tf_dataset = tf.data.Dataset.from_generator(
             dataset_id
         );
         let parts = resolve_entity_file_sources(client, &file_paths)?;
+        validate_entity_file_parts(&parts)?;
         let filenames: Vec<String> = parts.iter().map(|(_, n)| n.clone()).collect();
         let entity_json =
             prepare_entity_payload_json(&entity_json, &filenames, file_category.as_deref(), split.as_deref())?;
@@ -1283,6 +1288,7 @@ tf_dataset = tf.data.Dataset.from_generator(
             dataset_id, entity_id
         );
         let parts = resolve_entity_file_sources(client, &file_paths)?;
+        validate_entity_file_parts(&parts)?;
         let filenames: Vec<String> = parts.iter().map(|(_, n)| n.clone()).collect();
         let update_json =
             prepare_entity_payload_json(&update_json, &filenames, file_category.as_deref(), split.as_deref())?;
@@ -1586,14 +1592,18 @@ tf_dataset = tf.data.Dataset.from_generator(
 
     /// `POST /datasets/datasetEntities/files/{dataset_id}/{entity_id}` — attach files.
     ///
-    /// `file_category`: ``"input"`` (default) or ``"output"``.
+    /// `file_category`: ``"input"`` (default) or ``"output"``. Each file ≤ 2 GB.
     pub fn upload_dataset_entity_files<T: ApiClient>(
         client: &T,
         dataset_id: i32,
         entity_id: &str,
         file_paths: Vec<String>,
         file_category: Option<String>,
+        check_permission: bool,
     ) -> PyResult<PyObject> {
+        if check_permission {
+            ensure_dataset_write(client, dataset_id)?;
+        }
         let token = client.require_token()?;
         let category = normalize_entity_file_category(
             file_category.as_deref().unwrap_or("input"),
@@ -1609,6 +1619,23 @@ tf_dataset = tf.data.Dataset.from_generator(
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "file_paths must resolve to at least one file",
             ));
+        }
+        for (bytes, name) in &parts {
+            let size = bytes.len() as u64;
+            if size == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "entity file is empty: {}",
+                    name
+                )));
+            }
+            if size > ENTITY_OR_CSV_MAX_BYTES {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "entity file '{}' exceeds maximum upload size ({}). Max is {}.",
+                    name,
+                    upload_limits::format_bytes(size),
+                    upload_limits::format_bytes(ENTITY_OR_CSV_MAX_BYTES),
+                )));
+            }
         }
         client.submit_multipart_files("POST", endpoint, parts, Some(token))
     }
@@ -1629,6 +1656,10 @@ tf_dataset = tf.data.Dataset.from_generator(
     // -----------------------------------------------------------------------
 
     /// `POST /datasets/datasetEntities/bulk/{dataset_id}` — start async bulk upload job.
+    ///
+    /// Limits (client): CSV ≤ 2 GB; archive `.zip` ≤ 50 GB. File is streamed from disk.
+    /// `archive_layout` required for `upload_type=archive` (`input_output` | `classes`).
+    /// `on_upload_progress(bytes_sent, total_bytes, percent)` mirrors FE transfer progress.
     #[allow(clippy::too_many_arguments)]
     pub fn bulk_upload_dataset_entities<T: ApiClient>(
         client: &T,
@@ -1639,9 +1670,15 @@ tf_dataset = tf.data.Dataset.from_generator(
         source: Option<String>,
         dataset_schema: Option<serde_json::Value>,
         bulk_split: Option<String>,
+        archive_layout: Option<String>,
         strict: bool,
         idempotency_key: Option<String>,
+        on_upload_progress: Option<PyObject>,
+        check_permission: bool,
     ) -> PyResult<PyObject> {
+        if check_permission {
+            ensure_dataset_write(client, dataset_id)?;
+        }
         let upload_type = upload_type.trim().to_ascii_lowercase();
         if upload_type != "archive" && upload_type != "csv" {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -1654,40 +1691,37 @@ tf_dataset = tf.data.Dataset.from_generator(
                 "labeling_algo is required and cannot be empty or 'none'",
             ));
         }
-        let path = Path::new(file_path);
-        if !path.is_file() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "bulk upload file not found: {}",
-                file_path
-            )));
+        if let Some(ref s) = source {
+            upload_limits::validate_source(s)?;
         }
+        let path = Path::new(file_path);
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if upload_type == "archive" && ext != "zip" {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "upload_type 'archive' requires a .zip file",
-            ));
-        }
-        if upload_type == "csv" && ext != "csv" {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "upload_type 'csv' requires a .csv file",
-            ));
-        }
-
-        let file_bytes = fs::read(path).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                "Failed to read {}: {}",
-                file_path, e
-            ))
-        })?;
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("upload.bin")
-            .to_string();
+        let (max_bytes, kind) = if upload_type == "archive" {
+            if ext != "zip" {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "upload_type 'archive' requires a .zip file",
+                ));
+            }
+            let layout = archive_layout.as_deref().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "archive_layout is required for upload_type='archive' ('input_output' or 'classes')",
+                )
+            })?;
+            let _ = upload_limits::normalize_archive_layout(layout)?;
+            (BULK_ARCHIVE_MAX_BYTES, "bulk archive")
+        } else {
+            if ext != "csv" {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "upload_type 'csv' requires a .csv file",
+                ));
+            }
+            (ENTITY_OR_CSV_MAX_BYTES, "bulk CSV")
+        };
+        upload_limits::validate_upload_file(path, max_bytes, kind)?;
 
         let mut sources = serde_json::Map::new();
         sources.insert("uploadType".to_string(), serde_json::json!(upload_type));
@@ -1701,7 +1735,16 @@ tf_dataset = tf.data.Dataset.from_generator(
             sources.insert("datasetSchema".to_string(), serde_json::json!({}));
         }
         if let Some(split) = bulk_split {
-            sources.insert("bulkSplit".to_string(), serde_json::json!(split));
+            sources.insert(
+                "bulkSplit".to_string(),
+                serde_json::json!(upload_limits::normalize_bulk_split(&split)?),
+            );
+        }
+        if let Some(layout) = archive_layout {
+            sources.insert(
+                "archiveLayout".to_string(),
+                serde_json::json!(upload_limits::normalize_archive_layout(&layout)?),
+            );
         }
         let sources_json = serde_json::Value::Object(sources).to_string();
 
@@ -1714,25 +1757,26 @@ tf_dataset = tf.data.Dataset.from_generator(
         client.submit_bulk_upload(
             endpoint,
             sources_json,
-            file_bytes,
-            file_name,
+            file_path.to_string(),
             headers,
             Some(client.require_token()?),
+            on_upload_progress,
         )
     }
 
-    /// `GET /datasets/datasetEntities/bulk/jobs/{job_id}?datasetId=`
+    /// `GET /datasets/datasetEntities/bulk/jobs/{job_id}?datasetId=` → [`BulkUploadJob`].
     pub fn get_bulk_upload_job<T: ApiClient>(
         client: &T,
         dataset_id: i32,
         job_id: &str,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<BulkUploadJob>> {
         let token = client.require_token()?;
         let endpoint = format!(
             "/data-micro-services/v2/datasets/datasetEntities/bulk/jobs/{}?datasetId={}",
             job_id, dataset_id
         );
-        client.make_request("GET".to_string(), endpoint, None, Some(token))
+        let obj = client.make_request("GET".to_string(), endpoint, None, Some(token))?;
+        pyobject_to_bulk_job(obj)
     }
 
     /// `GET /datasets/datasetEntities/bulk/jobs?datasetId=`
@@ -1776,35 +1820,33 @@ tf_dataset = tf.data.Dataset.from_generator(
     }
 
     /// Poll until job reaches a terminal status (`completed` / `failed` / `cancelled`) or timeout.
+    ///
+    /// `on_progress`: optional callable receiving the current [`BulkUploadJob`] each poll
+    /// (use `job.percent`, `job.status`, `job.phase` like the React progress panel).
     pub fn wait_for_bulk_upload_job<T: ApiClient>(
         client: &T,
         dataset_id: i32,
         job_id: &str,
         poll_interval_secs: Option<f64>,
         timeout_secs: Option<f64>,
-    ) -> PyResult<PyObject> {
+        on_progress: Option<PyObject>,
+    ) -> PyResult<Py<BulkUploadJob>> {
         let interval = poll_interval_secs.unwrap_or(2.0).max(0.2);
         let timeout = timeout_secs.unwrap_or(600.0);
         let start = std::time::Instant::now();
         loop {
-            let status_obj = Self::get_bulk_upload_job(client, dataset_id, job_id)?;
-            let terminal = Python::with_gil(|py| -> PyResult<bool> {
-                let status = status_obj
-                    .bind(py)
-                    .call_method1("get", ("status",))
-                    .or_else(|_| status_obj.bind(py).call_method1("get", ("Status",)))
-                    .ok();
-                let s = status
-                    .and_then(|v| v.extract::<String>().ok())
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                Ok(matches!(
-                    s.as_str(),
-                    "completed" | "complete" | "failed" | "error" | "cancelled" | "canceled"
-                ))
+            let job = Self::get_bulk_upload_job(client, dataset_id, job_id)?;
+            if let Some(ref cb) = on_progress {
+                Python::with_gil(|py| {
+                    let bound = job.bind(py);
+                    let _ = cb.bind(py).call1((bound.clone(),));
+                });
+            }
+            let terminal = Python::with_gil(|py| {
+                job.bind(py).call_method0("is_terminal")?.extract::<bool>()
             })?;
             if terminal {
-                return Ok(status_obj);
+                return Ok(job);
             }
             if start.elapsed().as_secs_f64() >= timeout {
                 return Err(PyErr::new::<pyo3::exceptions::PyTimeoutError, _>(format!(
@@ -2084,6 +2126,44 @@ tf_dataset = tf.data.Dataset.from_generator(
             Some(client.require_token()?),
         )
     }
+}
+
+fn pyobject_to_bulk_job(obj: PyObject) -> PyResult<Py<BulkUploadJob>> {
+    let value = crate::utils::python_json::pyobject_to_rust_value(&obj, "bulk upload job")?;
+    Python::with_gil(|py| Py::new(py, BulkUploadJob::from_json_value(value)))
+}
+
+fn validate_entity_file_parts(parts: &[(Vec<u8>, String)]) -> PyResult<()> {
+    for (bytes, name) in parts {
+        let size = bytes.len() as u64;
+        if size == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "entity file is empty: {}",
+                name
+            )));
+        }
+        if size > ENTITY_OR_CSV_MAX_BYTES {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "entity file '{}' exceeds maximum upload size ({}). Max is {}.",
+                name,
+                upload_limits::format_bytes(size),
+                upload_limits::format_bytes(ENTITY_OR_CSV_MAX_BYTES),
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Soft RBAC gate: require `dataset.write` (or global equivalent) when requested.
+fn ensure_dataset_write<T: ApiClient>(client: &T, dataset_id: i32) -> PyResult<()> {
+    if !crate::users::users::Users::has_permission(client, "dataset.write", Some(dataset_id), None)? {
+        return Err(PyErr::new::<pyo3::exceptions::PyPermissionError, _>(format!(
+            "Missing permission 'dataset.write' for dataset {}. \
+             Call get_my_permissions(dataset_id={}) to see allowed actions.",
+            dataset_id, dataset_id
+        )));
+    }
+    Ok(())
 }
 
 /// Filter dataset items by `entity_info.split` (missing split counts as `train`).

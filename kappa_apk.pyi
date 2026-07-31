@@ -8,6 +8,14 @@ def version() -> str:
     """Return the library version string (kf-sdk / kappa_apk)."""
     ...
 
+def min_backend_version() -> str:
+    """Minimum Kappa-framework product version required (``\"2.10.0\"``)."""
+    ...
+
+def compatibility_info() -> dict[str, Any]:
+    """``{sdk_version, min_backend_version, notes}`` for scripts and CI."""
+    ...
+
 # ---------------------------------------------------------------------------
 # Data models — returned by client/benchmark methods
 # ---------------------------------------------------------------------------
@@ -39,6 +47,48 @@ class DatasetItem:
     def split(self) -> str:
         """``dsEntityInfo.split``; defaults to ``\"train\"`` when absent."""
         ...
+
+class BulkUploadJob:
+    """Status snapshot for an async bulk entity upload job."""
+
+    @property
+    def job_id(self) -> str: ...
+    @property
+    def dataset_id(self) -> int: ...
+    @property
+    def upload_type(self) -> str: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def phase(self) -> Optional[str]: ...
+    @property
+    def total_rows(self) -> int: ...
+    @property
+    def processed_rows(self) -> int: ...
+    @property
+    def percent(self) -> Optional[int]:
+        """Job processing percent from ``processedRows/totalRows``, or None."""
+        ...
+    @property
+    def source(self) -> Optional[str]: ...
+    @property
+    def filename(self) -> Optional[str]: ...
+    @property
+    def failure_kind(self) -> Optional[str]: ...
+    @property
+    def labeling_algo(self) -> Optional[str]: ...
+    @property
+    def retryable(self) -> bool: ...
+    @property
+    def can_cancel(self) -> bool: ...
+    @property
+    def can_retry(self) -> bool: ...
+    @property
+    def is_stale(self) -> bool: ...
+    @property
+    def preflight_deferred(self) -> bool: ...
+    def is_terminal(self) -> bool: ...
+    def as_dict(self) -> dict[str, Any]: ...
 
 class Dataset:
     """Dataset metadata record returned by listing / lookup calls."""
@@ -610,6 +660,23 @@ class KappaApkClient:
         """Return the authenticated user's profile (``GET /user-micro-services/v2/users/me``)."""
         ...
 
+    def get_my_permissions(
+        self,
+        dataset_id: Optional[int] = None,
+        org_id: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Effective permissions (``GET /users/me/permissions``)."""
+        ...
+
+    def has_permission(
+        self,
+        code: str,
+        dataset_id: Optional[int] = None,
+        org_id: Optional[int] = None,
+    ) -> bool:
+        """Whether *code* (e.g. ``dataset.write``) is granted for the optional scopes."""
+        ...
+
     def get_base_url(self) -> str: ...
     def set_base_url(self, url: str) -> None: ...
 
@@ -887,8 +954,9 @@ class KappaApkClient:
         entity_id: str,
         file_paths: list[str],
         file_category: Optional[str] = None,
+        check_permission: bool = False,
     ) -> dict[str, Any]:
-        """Upload files onto an existing entity (``file_category``: input|output)."""
+        """Upload files onto an existing entity (``file_category``: input|output; max 2 GB)."""
         ...
 
     def delete_dataset_entity_files(
@@ -907,13 +975,22 @@ class KappaApkClient:
         source: Optional[str] = None,
         dataset_schema: Optional[Any] = None,
         bulk_split: Optional[str] = None,
+        archive_layout: Optional[str] = None,
         strict: bool = True,
         idempotency_key: Optional[str] = None,
+        on_upload_progress: Optional[Any] = None,
+        check_permission: bool = False,
     ) -> dict[str, Any]:
-        """Start async bulk upload (``upload_type``: archive|csv)."""
+        """Start async bulk upload.
+
+        * ``upload_type``: ``archive`` | ``csv``
+        * CSV max 2 GB; archive ``.zip`` max 50 GB (streamed)
+        * ``archive_layout`` required for archive: ``input_output`` | ``classes``
+        * ``on_upload_progress(sent, total, percent)`` — HTTP transfer progress
+        """
         ...
 
-    def get_bulk_upload_job(self, dataset_id: int, job_id: str) -> dict[str, Any]: ...
+    def get_bulk_upload_job(self, dataset_id: int, job_id: str) -> BulkUploadJob: ...
     def list_bulk_upload_jobs(self, dataset_id: int) -> dict[str, Any]: ...
     def cancel_bulk_upload_job(self, dataset_id: int, job_id: str) -> dict[str, Any]: ...
     def cancel_stale_bulk_upload_jobs(self, dataset_id: int) -> dict[str, Any]: ...
@@ -923,8 +1000,9 @@ class KappaApkClient:
         job_id: str,
         poll_interval_secs: Optional[float] = None,
         timeout_secs: Optional[float] = None,
-    ) -> dict[str, Any]:
-        """Poll until bulk job reaches a terminal status or times out."""
+        on_progress: Optional[Any] = None,
+    ) -> BulkUploadJob:
+        """Poll until bulk job is terminal; *on_progress(job)* each poll."""
         ...
 
     def retry_bulk_upload_job(

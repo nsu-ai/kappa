@@ -27,6 +27,40 @@ impl Users {
         Self::parse_user_response(json_obj)
     }
 
+    /// `GET /users/me/permissions` — effective permissions (optionally scoped).
+    pub fn get_my_permissions<T: ApiClient>(
+        client: &T,
+        dataset_id: Option<i32>,
+        org_id: Option<i32>,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let mut endpoint = "/user-micro-services/v2/users/me/permissions".to_string();
+        let mut q = Vec::new();
+        if let Some(id) = dataset_id {
+            q.push(format!("dataset_id={}", id));
+        }
+        if let Some(id) = org_id {
+            q.push(format!("org_id={}", id));
+        }
+        if !q.is_empty() {
+            endpoint.push('?');
+            endpoint.push_str(&q.join("&"));
+        }
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
+    }
+
+    /// Return whether `code` is granted globally or on the given dataset/org scope.
+    pub fn has_permission<T: ApiClient>(
+        client: &T,
+        code: &str,
+        dataset_id: Option<i32>,
+        org_id: Option<i32>,
+    ) -> PyResult<bool> {
+        let perms = Self::get_my_permissions(client, dataset_id, org_id)?;
+        let value = pyobject_to_rust_value(&perms, "permissions")?;
+        Ok(permission_code_present(&value, code))
+    }
+
     /// Parse user response JSON into a User struct.
     fn parse_user_response(json_obj: PyObject) -> PyResult<User> {
         let value = pyobject_to_rust_value(&json_obj, "user profile")?;
@@ -37,6 +71,34 @@ impl Users {
             ))
         })
     }
+}
+
+fn permission_code_present(value: &serde_json::Value, code: &str) -> bool {
+    let needle = code.trim();
+    if needle.is_empty() {
+        return false;
+    }
+    fn scan(v: &serde_json::Value, needle: &str) -> bool {
+        match v {
+            serde_json::Value::String(s) => s == needle || s.ends_with(needle),
+            serde_json::Value::Array(arr) => arr.iter().any(|x| scan(x, needle)),
+            serde_json::Value::Object(map) => {
+                if let Some(c) = map.get("code").or_else(|| map.get("permissionCode")) {
+                    if scan(c, needle) {
+                        return true;
+                    }
+                }
+                if let Some(p) = map.get("permission") {
+                    if scan(p, needle) {
+                        return true;
+                    }
+                }
+                map.values().any(|x| scan(x, needle))
+            }
+            _ => false,
+        }
+    }
+    scan(value, needle)
 }
 
 #[cfg(test)]
