@@ -195,3 +195,7 @@ internal_services/
 
 # Maintainer-only docs (local paths, sync notes, backend mapping) — keep on disk, never publish
 internal_docs/
+
+# Ignore local test files
+local_tests/
+.kappa_uploads/

@@ -303,6 +303,7 @@ impl ApiClient for KappaApkClient {
 
         let url = format!("{}{}", self.base_url, endpoint);
         let http = self.client.clone();
+        let runtime = Arc::clone(&self.runtime);
         let path = std::path::PathBuf::from(&file_path);
         let file_name = path
             .file_name()
@@ -312,84 +313,121 @@ impl ApiClient for KappaApkClient {
         let total = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         let progress_cb = on_upload_progress.map(Arc::new);
 
-        self.runtime.block_on(async move {
-            let file = tokio::fs::File::open(&path).await.map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                    "Cannot open {}: {}",
-                    path.display(),
-                    e
-                ))
-            })?;
-            let reader = ReaderStream::new(file);
-            let sent = Arc::new(AtomicU64::new(0));
-            let last_pct = Arc::new(AtomicI32::new(-1));
-            let sent2 = sent.clone();
-            let last2 = last_pct.clone();
-            let cb2 = progress_cb.clone();
-            let total2 = total;
+        // Release the GIL before block_on. Progress callbacks re-acquire it via
+        // Python::with_gil from Tokio worker threads; holding the GIL across
+        // block_on deadlocks as soon as the first progress tick runs.
+        Python::with_gil(|py| {
+            py.allow_threads(move || {
+                runtime.block_on(async move {
+                    let file = tokio::fs::File::open(&path).await.map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                            "Cannot open {}: {}",
+                            path.display(),
+                            e
+                        ))
+                    })?;
+                    let reader = ReaderStream::new(file);
+                    let sent = Arc::new(AtomicU64::new(0));
+                    let last_pct = Arc::new(AtomicI32::new(-1));
+                    let sent2 = sent.clone();
+                    let last2 = last_pct.clone();
+                    let cb2 = progress_cb.clone();
+                    let total2 = total;
 
-            let stream = reader.map(move |chunk| match chunk {
-                Ok(bytes) => {
-                    let n = bytes.len() as u64;
-                    let cur = sent2.fetch_add(n, Ordering::Relaxed) + n;
-                    let pct = if total2 > 0 {
-                        (((cur as f64) * 100.0) / (total2 as f64)).round() as i32
-                    } else {
-                        0
+                    let stream = reader.map(move |chunk| match chunk {
+                        Ok(bytes) => {
+                            let n = bytes.len() as u64;
+                            let cur = sent2.fetch_add(n, Ordering::Relaxed) + n;
+                            let pct = if total2 > 0 {
+                                (((cur as f64) * 100.0) / (total2 as f64)).round() as i32
+                            } else {
+                                0
+                            }
+                            .clamp(0, 100);
+                            let prev_pct = last2.swap(pct, Ordering::Relaxed);
+                            if (pct != prev_pct || cur >= total2)
+                                && let Some(ref cb) = cb2
+                            {
+                                Python::with_gil(|py| {
+                                    let _ = cb.bind(py).call1((cur, total2, pct));
+                                });
+                            }
+                            Ok::<_, std::io::Error>(bytes)
+                        }
+                        Err(e) => Err(e),
+                    });
+
+                    let body = reqwest::Body::wrap_stream(stream);
+                    let file_part = multipart::Part::stream(body)
+                        .file_name(file_name)
+                        .mime_str("application/octet-stream")
+                        .map_err(|e| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                        })?;
+                    let form = multipart::Form::new()
+                        .text("sources", sources_json)
+                        .part("file", file_part);
+
+                    let mut request = http.post(&url).multipart(form);
+                    request = request.header("accept", "application/json");
+                    if let Some(ref t) = token {
+                        request = request.header("Authorization", format!("Bearer {}", t));
                     }
-                    .clamp(0, 100);
-                    let prev_pct = last2.swap(pct, Ordering::Relaxed);
-                    if (pct != prev_pct || cur >= total2)
-                        && let Some(ref cb) = cb2
+                    for (k, v) in headers {
+                        request = request.header(k, v);
+                    }
+
+                    let response = request.send().await.map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
+                            "Request failed: {}",
+                            e
+                        ))
+                    })?;
+
+                    let status = response.status();
+                    let text = response.text().await.unwrap_or_default();
+                    if status.is_success() {
+                        let json_data: serde_json::Value = serde_json::from_str(&text)
+                            .map_err(|e| {
+                                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                                    "Failed to parse response: {}",
+                                    e
+                                ))
+                            })?;
+                        return Python::with_gil(|py| json_value_to_pyobject(py, &json_data));
+                    }
+                    // BE returns HTTP 400 for layout preflight with status=needs_correction
+                    // and a jobId (staging kept for retry). Surface that body like a start
+                    // response so callers can save jobId and call retry_bulk_upload_job.
+                    if status.as_u16() == 400
+                        && let Ok(json_data) = serde_json::from_str::<serde_json::Value>(&text)
                     {
-                        Python::with_gil(|py| {
-                            let _ = cb.bind(py).call1((cur, total2, pct));
-                        });
+                        let has_job = json_data
+                            .get("jobId")
+                            .or_else(|| json_data.get("job_id"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false);
+                        let job_status = json_data
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        if has_job
+                            && (job_status == "needs_correction"
+                                || json_data
+                                    .get("retryable")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false))
+                        {
+                            return Python::with_gil(|py| {
+                                json_value_to_pyobject(py, &json_data)
+                            });
+                        }
                     }
-                    Ok::<_, std::io::Error>(bytes)
-                }
-                Err(e) => Err(e),
-            });
-
-            let body = reqwest::Body::wrap_stream(stream);
-            let file_part = multipart::Part::stream(body)
-                .file_name(file_name)
-                .mime_str("application/octet-stream")
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-            let form = multipart::Form::new()
-                .text("sources", sources_json)
-                .part("file", file_part);
-
-            let mut request = http.post(&url).multipart(form);
-            request = request.header("accept", "application/json");
-            if let Some(ref t) = token {
-                request = request.header("Authorization", format!("Bearer {}", t));
-            }
-            for (k, v) in headers {
-                request = request.header(k, v);
-            }
-
-            let response = request.send().await.map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                    "Request failed: {}",
-                    e
-                ))
-            })?;
-
-            if response.status().is_success() {
-                let json_data: serde_json::Value = response.json().await.map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Failed to parse response: {}",
-                        e
-                    ))
-                })?;
-                Python::with_gil(|py| json_value_to_pyobject(py, &json_data))
-            } else {
-                Err(http_error_to_pyerr(
-                    response.status(),
-                    response.text().await.unwrap_or_default(),
-                ))
-            }
+                    Err(http_error_to_pyerr(status, text))
+                })
+            })
         })
     }
 
@@ -660,11 +698,21 @@ impl KappaApkClient {
     /// ```
     #[new]
     pub fn new(base_url: String, login_id: String, passwd: String) -> PyResult<Self> {
-        let client = Client::new();
+        // Connect timeout only — bulk uploads can run for a long time with no overall deadline.
+        let client = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create HTTP client: {}",
+                    e
+                ))
+            })?;
         let runtime = Arc::new(tokio::runtime::Runtime::new().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                format!("Failed to create async runtime: {}", e),
-            )
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to create async runtime: {}",
+                e
+            ))
         })?);
         Ok(KappaApkClient {
             client,
@@ -697,34 +745,42 @@ impl KappaApkClient {
         };
         let login_url = format!("{}/user-micro-services/v2/session/new", self.base_url);
         let client = self.client.clone();
+        let runtime = Arc::clone(&self.runtime);
 
-        let login_data: User = self.runtime.block_on(async move {
-            let response = client
-                .post(&login_url)
-                .header("accept", "application/json")
-                .header("Content-Type", "application/json")
-                .json(&login_request)
-                .send()
-                .await
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyConnectionError, _>(
-                        format!("Request failed: {}", e),
-                    )
-                })?;
+        let login_data: User = Python::with_gil(|py| {
+            py.allow_threads(move || {
+                runtime.block_on(async move {
+                    let response = client
+                        .post(&login_url)
+                        .header("accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .json(&login_request)
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
+                                "Request failed: {}",
+                                e
+                            ))
+                        })?;
 
-            if response.status().is_success() {
-                response.json::<User>().await.map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        format!("Failed to parse login response: {}", e),
-                    )
+                    if response.status().is_success() {
+                        response.json::<User>().await.map_err(|e| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                                "Failed to parse login response: {}",
+                                e
+                            ))
+                        })
+                    } else {
+                        let status = response.status();
+                        let msg = response.text().await.unwrap_or_default();
+                        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "Login failed (HTTP {}): {}",
+                            status, msg
+                        )))
+                    }
                 })
-            } else {
-                let status = response.status();
-                let msg = response.text().await.unwrap_or_default();
-                Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    format!("Login failed (HTTP {}): {}", status, msg),
-                ))
-            }
+            })
         })?;
 
         self.login_response = Some(login_data.clone());
