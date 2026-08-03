@@ -109,7 +109,9 @@ Async job API — same flow as the React bulk dialog. Full script: [`code_exampl
 | CSV | **2 GB** client | Backend default is **50 MB** (`BULK_UPLOAD_MAX_CSV_BYTES`); raise that env for larger CSVs |
 | Archive `.zip` | **50 GB** | `upload_type="archive"` + `archive_layout` + `dataset_schema` |
 
-`archive_layout` must be `input_output` or `classes`. For `input_output`, pass `dataset_schema={"inputDataPath": "input", ...}`; for `classes`, pass a non-empty `classes` list. Do **not** send an empty `{}` schema — the server treats that as missing and returns 422. The file is **streamed** from disk (not loaded fully into RAM).
+`archive_layout` must be `input_output` or `classes`. For `input_output`, pass `dataset_schema={"inputDataPath": "input", ...}` where paths are **relative to the zip root** (include a parent folder if the zip wraps one, e.g. `"abc/input"`). For `classes`, pass a non-empty `classes` list. Do **not** send an empty `{}` schema — the server treats that as missing and returns 422. The file is **streamed** from disk (not loaded fully into RAM).
+
+If folder paths are wrong, the backend may respond with HTTP 400 and `status=needs_correction` plus `jobId` / `availableArchiveDirectories`. The SDK returns that JSON (does not raise) so you can call `retry_bulk_upload_job` with corrected `datasetSchema` without re-uploading the zip. `wait_for_bulk_upload_job` also stops on `needs_correction`.
 
 Also see [`code_examples/dataset_operations_example.py`](../code_examples/dataset_operations_example.py) (CUD → entities → version) and [`code_examples/dataset_lifecycle_example.py`](../code_examples/dataset_lifecycle_example.py) (schema, mark-labeled, soft-delete/recover).
 

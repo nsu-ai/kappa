@@ -1849,10 +1849,12 @@ tf_dataset = tf.data.Dataset.from_generator(
                     let _ = cb.bind(py).call1((bound.clone(),));
                 });
             }
-            let terminal = Python::with_gil(|py| {
-                job.bind(py).call_method0("is_terminal")?.extract::<bool>()
+            let stop = Python::with_gil(|py| {
+                job.bind(py)
+                    .call_method0("is_wait_complete")?
+                    .extract::<bool>()
             })?;
-            if terminal {
+            if stop {
                 return Ok(job);
             }
             if start.elapsed().as_secs_f64() >= timeout {

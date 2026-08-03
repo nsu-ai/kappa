@@ -910,6 +910,9 @@ impl BulkUploadJob {
     }
 
     /// True when status is a terminal job state (FE `isBulkJobTerminal` parity).
+    ///
+    /// Note: ``needs_correction`` is **not** terminal (FE still treats it as active for
+    /// list filters) but :meth:`wait_for_bulk_upload_job` stops on it so callers can retry.
     fn is_terminal(&self) -> bool {
         matches!(
             self.status().to_ascii_lowercase().as_str(),
@@ -921,6 +924,16 @@ impl BulkUploadJob {
                 | "cancelled"
                 | "canceled"
         )
+    }
+
+    /// True when polling should stop (terminal **or** ``needs_correction``).
+    fn is_wait_complete(&self) -> bool {
+        self.is_terminal() || self.status().eq_ignore_ascii_case("needs_correction")
+    }
+
+    /// True when status is ``needs_correction`` (fix paths / retry with staging).
+    fn needs_correction(&self) -> bool {
+        self.status().eq_ignore_ascii_case("needs_correction")
     }
 
     /// Full API payload as a Python dict.
@@ -963,5 +976,18 @@ mod bulk_upload_job_tests {
             "status": "processing"
         }));
         assert!(!job.is_terminal());
+        assert!(!job.is_wait_complete());
+    }
+
+    #[test]
+    fn needs_correction_stops_wait_but_not_terminal() {
+        let job = BulkUploadJob::from_json_value(json!({
+            "jobId": "j1",
+            "status": "needs_correction",
+            "retryable": true
+        }));
+        assert!(!job.is_terminal());
+        assert!(job.needs_correction());
+        assert!(job.is_wait_complete());
     }
 }
