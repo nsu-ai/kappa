@@ -2,8 +2,9 @@
 
 [![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/main/LICENSE.md)
 ![Python 3.9–3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-green.svg)
-[![PyPI Downloads](https://pypi.org/project/kf-sdk/)](https://pypi.org/project/kf-sdk/)
-![Releases](https://img.shields.io/github/release/nsu-ai/kappa.svg)
+[![PyPI version](https://img.shields.io/pypi/v/kf-sdk.svg)](https://pypi.org/project/kf-sdk/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/kf-sdk.svg)](https://pypi.org/project/kf-sdk/)
+[![GitHub release](https://img.shields.io/github/v/release/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/releases)
 
 Python client SDK for **Kappa-framework** — a self-hosted microservices platform for ML/AI research workflows.
 
@@ -13,7 +14,7 @@ Built with Rust + [PyO3](https://pyo3.rs). **PyPI:** `kf-sdk` · **import:** `im
 
 | | |
 |---|---|
-| **Version** | 3.0.2 |
+| **Version** | 3.0.3 |
 | **Requires Kappa** | **≥ 2.10.0** (`min_backend_version()`) |
 | **Python** | 3.9+ |
 | **Rust edition** | 2024 |
@@ -21,7 +22,7 @@ Built with Rust + [PyO3](https://pyo3.rs). **PyPI:** `kf-sdk` · **import:** `im
 
 ---
 
-# Kappa — ϰ-framework for dataset and model management, version 3.0.2
+# Kappa — ϰ-framework for dataset and model management, version 3.0.3
 
 Kappa is a conceptual and software framework for dataset curation and model lifecycle management, developed at the [AI Research Center](https://nsu.ru/n/ai-center) for Construction and Urban Environment, Novosibirsk State University.
 

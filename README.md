@@ -2,8 +2,9 @@
 
 [![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/main/LICENSE.md)
 ![Python 3.9–3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-green.svg)
-[![PyPI Downloads](https://pypi.org/project/kf-sdk/)](https://pypi.org/project/kf-sdk/)
-![Releases](https://img.shields.io/github/release/nsu-ai/kappa.svg)
+[![PyPI version](https://img.shields.io/pypi/v/kf-sdk.svg)](https://pypi.org/project/kf-sdk/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/kf-sdk.svg)](https://pypi.org/project/kf-sdk/)
+[![GitHub release](https://img.shields.io/github/v/release/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/releases)
 
 Python-клиент SDK для **Kappa-framework** — самостоятельно развёртываемой микросервисной платформы для исследовательских ML/AI рабочих процессов.
 
@@ -13,7 +14,7 @@ Python-клиент SDK для **Kappa-framework** — самостоятель�
 
 | | |
 |---|---|
-| **Версия** | 3.0.2 |
+| **Версия** | 3.0.3 |
 | **Требует Kappa** | **≥ 2.10.0** (`min_backend_version()`) |
 | **Python** | 3.9+ |
 | **Rust edition** | 2024 |
@@ -21,7 +22,7 @@ Python-клиент SDK для **Kappa-framework** — самостоятель�
 
 ---
 
-# Каппа — ϰ-фреймворк управления датасетами и моделями, версия 3.0.2
+# Каппа — ϰ-фреймворк управления датасетами и моделями, версия 3.0.3
 
 Каппа — набор концептуального и программного обеспечения (фреймворк) для осуществления функций курации датасетов и моделей ([Исследовательский центр](https://nsu.ru/n/ai-center) в сфере искусственного интеллекта по направлению «Строительство и городская среда» НГУ, Новосибирск).
 
