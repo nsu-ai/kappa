@@ -66,7 +66,7 @@ python3 code_examples/http_client_authentication_example.py
 
 ### `bulk_upload.py`
 
-**Purpose**: Async bulk entity upload (CSV ≤ 2 GB client / BE default 50 MB, or zip ≤ 50 GB) with transfer % and job polling (`BulkUploadJob`). Requires Kappa-framework **≥ 2.10.0**.
+**Purpose**: Async bulk entity upload (CSV ≤ 2 GB client / BE default 50 MB, or zip ≤ 50 GB) with transfer % and job polling (`BulkUploadJob`). Requires Kappa-framework **≥ 2.11.0**.
 
 Archive `input_output` needs `dataset_schema.inputDataPath` (use `--input-data-path`).
 
@@ -77,6 +77,27 @@ export KAPPA_USER=admin
 export KAPPA_PASSWORD='***'
 python code_examples/bulk_upload.py --dataset-id 42 --file ./data.zip \
   --upload-type archive --archive-layout input_output --input-data-path input
+```
+
+### `bulk_mutation_and_version_build.py`
+
+**Purpose**: Async bulk mutations (mark-labeled / self-verify / auto-verify) and version archive builds (create → wait → publish / package download). Requires Kappa-framework **≥ 2.11.0**.
+
+```bash
+python code_examples/bulk_mutation_and_version_build.py --dataset-id 42 --mark-labeled-all
+python code_examples/bulk_mutation_and_version_build.py --dataset-id 42 --create-version --download-package
+```
+
+### `benchmark_and_model_artifacts.py`
+
+**Purpose**: Benchmark evaluation-set download (package → benchmark proxy → legacy zip), submitting predictions with artifact upload and inference linking, report PDF download, schema-driven `write_model_inference()`, and artifact upload/download including the resumable multipart session used for large weights. Requires Kappa-framework **≥ 2.11.0**.
+
+```bash
+python code_examples/benchmark_and_model_artifacts.py --benchmark-id <uuid> --run --model-path ./model
+python code_examples/benchmark_and_model_artifacts.py --benchmark-id <uuid> --report report.pdf --report-lang ru
+python code_examples/benchmark_and_model_artifacts.py --model-id <uuid> --write-inference --model-path ./model
+python code_examples/benchmark_and_model_artifacts.py --model-id <uuid> --inference-id 12 \
+  --upload ./llm-70b --file-category 3 --download-artifacts ./artifacts
 ```
 
 ### `dataset_operations_example.py`

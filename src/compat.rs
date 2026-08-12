@@ -10,10 +10,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 /// Minimum Kappa-framework product version required by this SDK release.
-pub const MIN_BACKEND_VERSION: &str = "2.10.0";
+pub const MIN_BACKEND_VERSION: &str = "2.11.0";
 
-/// Notes shown to users about why 2.10.0+ is required.
+/// Notes shown to users about why 2.11.0+ is required.
 pub const COMPAT_NOTES: &[&str] = &[
+    "Bulk mutations (self-verify, auto-verify, mark-labeled, delete/recover/files): async 202 + job poll",
+    "Version create/refresh: archive build jobs; wait until buildStatus=ready before publish/download",
+    "Version package: sharded manifest + shard download (legacy single-zip archive still available)",
     "Bulk upload: staging/retry, archiveLayout, admission (429), large zip (up to 50 GB)",
     "Entity files: file_category input|output; single-file max 2 GB",
     "CSV bulk: client allows up to 2 GB; backend default BULK_UPLOAD_MAX_CSV_BYTES is 50 MB",
@@ -23,7 +26,7 @@ pub const COMPAT_NOTES: &[&str] = &[
     "ML tags: first tag must be predefined for dataset_type/model_type (dataset_tags_{id})",
 ];
 
-/// Return the minimum supported Kappa-framework version (`"2.10.0"`).
+/// Return the minimum supported Kappa-framework version (`"2.11.0"`).
 #[pyfunction]
 pub fn min_backend_version() -> &'static str {
     MIN_BACKEND_VERSION

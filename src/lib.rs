@@ -7,6 +7,8 @@ use pyo3::prelude::*;
 mod client;
 mod traits;
 mod models;
+mod inference_writer;
+mod model_artifacts;
 mod models_api;
 mod users;
 mod benchmarks;
@@ -27,8 +29,9 @@ use datasets::dataloader_helper::DataLoaderHelper;
 use datasets::datasets::KappaDataset;
 use datasets::kappa_dataloader::KappaDataLoader;
 use models::datasets_model::{
-    BulkUploadJob, DatasetLabel, DeleteDatasetEntities, NewDataset, NewDatasetEntity,
-    NewDatasetVersion, UpdateDatasetEntity, UpdateDatasetLabel, UpdateDatasetRequest,
+    BulkMutationJob, BulkUploadJob, DatasetLabel, DeleteDatasetEntities, NewDataset,
+    NewDatasetEntity, NewDatasetVersion, UpdateDatasetEntity, UpdateDatasetLabel,
+    UpdateDatasetRequest, VersionBuildJob,
 };
 use models::datasets_model::{
     Dataset, DatasetDownloadDetails, DatasetItem, DatasetVersionDetails, ItemFile,
@@ -74,6 +77,8 @@ fn kappa_apk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DeleteDatasetEntities>()?;
     m.add_class::<NewDatasetVersion>()?;
     m.add_class::<BulkUploadJob>()?;
+    m.add_class::<BulkMutationJob>()?;
+    m.add_class::<VersionBuildJob>()?;
     transforms::vision::register(m)?;
     transforms::text::register(m)?;
     transforms::audio::register(m)?;

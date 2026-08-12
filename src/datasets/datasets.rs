@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 
 use crate::traits::ApiClient;
 use crate::datasets::kappa_dataloader::KappaDataLoader;
-use crate::utils::zip_utils::{self, cache_is_complete};
 use crate::models::datasets_model::{
     Dataset,
     DatasetVersionDetails,
@@ -21,8 +20,12 @@ use crate::models::datasets_model::{
     entity_split_from_info,
     normalize_entity_file_category,
     normalize_entity_split,
+    BulkMutationJob,
     BulkUploadJob,
+    VersionBuildJob,
 };
+use crate::utils::package_download;
+use crate::utils::zip_utils::{self, cache_is_complete};
 use crate::upload_limits::{
     self, BULK_ARCHIVE_MAX_BYTES, BULK_CSV_MAX_BYTES, ENTITY_FILE_MAX_BYTES,
 };
@@ -487,7 +490,13 @@ impl Datasets {
             zip_utils::download_and_extract_zip(&http, &url, Some(&token), &data_dir_dl)
                 .await
                 .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(e)
+                    // Kappa ≥ 2.11 only keeps this single zip for single-shard builds.
+                    let hint = if e.contains("404") {
+                        " Hint: large versions are sharded — use download_dataset_version_package()."
+                    } else {
+                        ""
+                    };
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("{}{}", e, hint))
                 })?;
 
             Ok(DatasetDownloadDetails {
@@ -517,8 +526,8 @@ impl Datasets {
         version_no: Option<String>,
         dataset_path: Option<String>,
     ) -> PyResult<Vec<DatasetItem>> {
-        // Ensure the dataset version archive is downloaded (or already cached)
-        let dataset_download_details = Self::download_dataset_version_archive(
+        // Sharded package first (Kappa ≥ 2.11); falls back to the legacy single zip.
+        let dataset_download_details = Self::download_dataset_version_package(
             client,
             dataset_id,
             dataset_name,
@@ -1321,8 +1330,13 @@ tf_dataset = tf.data.Dataset.from_generator(
         size: Option<i32>,
         order_by: Option<String>,
         order_keyword: Option<String>,
+        query_all: Option<bool>,
+        start_date: Option<String>,
+        end_date: Option<String>,
+        selected_version_id: Option<i32>,
+        selected_version_no: Option<String>,
     ) -> PyResult<PyObject> {
-        let page = page.unwrap_or(1);
+        let page = page.unwrap_or(1).max(1);
         let size = size.unwrap_or(20);
         let order_by = order_by.unwrap_or_else(|| "modifiedOn".to_string());
         let order_keyword = order_keyword.unwrap_or_else(|| "DESC".to_string());
@@ -1353,6 +1367,25 @@ tf_dataset = tf.data.Dataset.from_generator(
         }
         if let Some(pt) = publish_type {
             endpoint.push_str(&format!("&publishType={}", pt));
+        }
+        // queryAll=false narrows the result to datasets the caller owns, is assigned to,
+        // or has an explicit RBAC share on (the backend default, true, also lists the
+        // public catalogue).
+        if let Some(qa) = query_all {
+            endpoint.push_str(&format!("&queryAll={}", qa));
+        }
+        if let Some(sd) = start_date {
+            endpoint.push_str(&format!("&startDate={}", urlencoding::encode(&sd)));
+        }
+        if let Some(ed) = end_date {
+            endpoint.push_str(&format!("&endDate={}", urlencoding::encode(&ed)));
+        }
+        // Either of these adds selectedVersionNo / selectedVersionBuildStatus to each item.
+        if let Some(vid) = selected_version_id {
+            endpoint.push_str(&format!("&versionId={}", vid));
+        }
+        if let Some(vno) = selected_version_no {
+            endpoint.push_str(&format!("&versionNo={}", urlencoding::encode(&vno)));
         }
         client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
     }
@@ -1528,11 +1561,25 @@ tf_dataset = tf.data.Dataset.from_generator(
         size: Option<i32>,
         order_by: Option<String>,
         order: Option<String>,
+        entity_id: Option<String>,
+        location_id: Option<i32>,
+        assignment_filter: Option<String>,
+        start_date: Option<String>,
+        end_date: Option<String>,
     ) -> PyResult<PyObject> {
-        let page = page.unwrap_or(0);
+        // The backend computes offset = (page - 1) * size, so page must start at 1.
+        let page = page.unwrap_or(1).max(1);
         let size = size.unwrap_or(10);
         let order_by = order_by.unwrap_or_else(|| "modifiedOn".to_string());
         let order = order.unwrap_or_else(|| "DESC".to_string());
+        if let Some(af) = assignment_filter.as_deref()
+            && af != "assigned"
+            && af != "not_assigned"
+        {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "assignment_filter must be 'assigned' or 'not_assigned'",
+            ));
+        }
 
         let mut endpoint = format!(
             "/data-micro-services/v2/datasets/datasetEntities/filter/{}?page={}&size={}&orderBy={}&order={}",
@@ -1548,6 +1595,21 @@ tf_dataset = tf.data.Dataset.from_generator(
         }
         if let Some(vid) = version_id {
             endpoint.push_str(&format!("&versionId={}", vid));
+        }
+        if let Some(eid) = entity_id {
+            endpoint.push_str(&format!("&dsEntityId={}", urlencoding::encode(&eid)));
+        }
+        if let Some(lid) = location_id {
+            endpoint.push_str(&format!("&locationId={}", lid));
+        }
+        if let Some(af) = assignment_filter {
+            endpoint.push_str(&format!("&assignmentFilter={}", af));
+        }
+        if let Some(sd) = start_date {
+            endpoint.push_str(&format!("&startDate={}", urlencoding::encode(&sd)));
+        }
+        if let Some(ed) = end_date {
+            endpoint.push_str(&format!("&endDate={}", urlencoding::encode(&ed)));
         }
         client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
     }
@@ -1970,28 +2032,448 @@ tf_dataset = tf.data.Dataset.from_generator(
         client.make_request("POST".to_string(), endpoint, Some(sources_json), Some(token))
     }
 
-    /// `POST /datasets/datasetEntities/mark-labeled/{dataset_id}`
+    /// `POST /datasets/datasetEntities/mark-labeled/{dataset_id}` — enqueue mark-labeled job (202).
+    ///
+    /// Pass either a non-empty `dataset_entity_ids` list **or** `all_eligible=true` (Kappa ≥ 2.11).
+    /// Returns start payload with `jobId`; poll with [`Self::wait_for_bulk_mutation_job`].
     pub fn mark_dataset_entities_labeled<T: ApiClient>(
         client: &T,
         dataset_id: i32,
-        dataset_entity_ids: Vec<String>,
+        dataset_entity_ids: Option<Vec<String>>,
         remark: Option<String>,
+        all_eligible: Option<bool>,
     ) -> PyResult<PyObject> {
+        let use_all = all_eligible.unwrap_or(false);
+        let ids = dataset_entity_ids.unwrap_or_default();
+        if !use_all && ids.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Provide dataset_entity_ids or set all_eligible=True",
+            ));
+        }
         let token = client.require_token()?;
         let endpoint = format!(
             "/data-micro-services/v2/datasets/datasetEntities/mark-labeled/{}",
             dataset_id
         );
-        let mut body = serde_json::json!({ "datasetEntityIds": dataset_entity_ids });
+        let mut body = serde_json::Map::new();
+        if use_all {
+            body.insert("allEligible".to_string(), serde_json::json!(true));
+        } else {
+            body.insert("datasetEntityIds".to_string(), serde_json::json!(ids));
+        }
         if let Some(r) = remark {
-            body["remark"] = serde_json::json!(r);
+            body.insert("remark".to_string(), serde_json::json!(r));
         }
         client.make_request(
             "POST".to_string(),
             endpoint,
-            Some(body.to_string()),
+            Some(serde_json::Value::Object(body).to_string()),
             Some(token),
         )
+    }
+
+    /// `GET /datasets/datasetEntities/mark-labeled-stats/{dataset_id}`
+    pub fn get_mark_labeled_stats<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/mark-labeled-stats/{}",
+            dataset_id
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `GET /datasets/verification/self-verify-stats/{dataset_id}`
+    pub fn get_self_verify_stats<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/verification/self-verify-stats/{}",
+            dataset_id
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `POST /datasets/verification/self-verify-batch/{dataset_id}` — enqueue self-verify (202).
+    ///
+    /// `status`: 1 = Pass, 3 = Needs Modification (`comment` required when status=3).
+    pub fn bulk_self_verify_dataset_entities<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        status: i32,
+        comment: Option<String>,
+        job_corrections_by_entity_json: Option<String>,
+    ) -> PyResult<PyObject> {
+        if status != 1 && status != 3 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "status must be 1 (Pass) or 3 (Needs Modification)",
+            ));
+        }
+        if status == 3 && comment.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "comment is required when status=3 (Needs Modification)",
+            ));
+        }
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/verification/self-verify-batch/{}",
+            dataset_id
+        );
+        let mut body = serde_json::Map::new();
+        body.insert("status".to_string(), serde_json::json!(status));
+        if let Some(c) = comment {
+            body.insert("comment".to_string(), serde_json::json!(c));
+        }
+        if let Some(corr) = job_corrections_by_entity_json {
+            let value: serde_json::Value = serde_json::from_str(&corr).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "job_corrections_by_entity must be JSON object: {}",
+                    e
+                ))
+            })?;
+            body.insert("jobCorrectionsByEntity".to_string(), value);
+        }
+        client.make_request(
+            "POST".to_string(),
+            endpoint,
+            Some(serde_json::Value::Object(body).to_string()),
+            Some(token),
+        )
+    }
+
+    /// `POST /datasets/verification/auto-verify/{dataset_id}` — enqueue auto-verify (202).
+    pub fn auto_verify_dataset_entities<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/verification/auto-verify/{}",
+            dataset_id
+        );
+        client.make_request("POST".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `GET /datasets/datasetEntities/bulk-mutation/jobs/{job_id}?datasetId=`
+    pub fn get_bulk_mutation_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+    ) -> PyResult<Py<BulkMutationJob>> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk-mutation/jobs/{}?datasetId={}",
+            job_id, dataset_id
+        );
+        let obj = client.make_request("GET".to_string(), endpoint, None, Some(token))?;
+        pyobject_to_bulk_mutation_job(obj)
+    }
+
+    /// `GET /datasets/datasetEntities/bulk-mutation/jobs?datasetId=`
+    pub fn list_bulk_mutation_jobs<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk-mutation/jobs?datasetId={}",
+            dataset_id
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
+    }
+
+    /// `POST /datasets/datasetEntities/bulk-mutation/jobs/{job_id}/cancel?datasetId=`
+    pub fn cancel_bulk_mutation_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/bulk-mutation/jobs/{}/cancel?datasetId={}",
+            job_id, dataset_id
+        );
+        client.make_request("POST".to_string(), endpoint, None, Some(token))
+    }
+
+    /// Poll until a bulk-mutation job is terminal (`succeeded` / `failed` / `cancelled`).
+    ///
+    /// Default timeout is 1 hour — dataset-wide mutations can cover millions of entities.
+    pub fn wait_for_bulk_mutation_job<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        job_id: &str,
+        poll_interval_secs: Option<f64>,
+        timeout_secs: Option<f64>,
+        on_progress: Option<PyObject>,
+    ) -> PyResult<Py<BulkMutationJob>> {
+        let interval = poll_interval_secs.unwrap_or(2.0).max(0.2);
+        let timeout = timeout_secs.unwrap_or(3600.0);
+        let start = std::time::Instant::now();
+        loop {
+            let job = Self::get_bulk_mutation_job(client, dataset_id, job_id)?;
+            if let Some(ref cb) = on_progress {
+                Python::with_gil(|py| {
+                    let bound = job.bind(py);
+                    let _ = cb.bind(py).call1((bound.clone(),));
+                });
+            }
+            let stop = Python::with_gil(|py| {
+                job.bind(py)
+                    .call_method0("is_wait_complete")?
+                    .extract::<bool>()
+            })?;
+            if stop {
+                return Ok(job);
+            }
+            if start.elapsed().as_secs_f64() >= timeout {
+                return Err(PyErr::new::<pyo3::exceptions::PyTimeoutError, _>(format!(
+                    "Timed out waiting for bulk mutation job {} after {}s",
+                    job_id, timeout
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_secs_f64(interval));
+        }
+    }
+
+    /// `GET /datasets/versions/build-jobs/{job_id}`
+    pub fn get_version_build_job<T: ApiClient>(
+        client: &T,
+        job_id: &str,
+    ) -> PyResult<Py<VersionBuildJob>> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/versions/build-jobs/{}",
+            job_id
+        );
+        let obj = client.make_request("GET".to_string(), endpoint, None, Some(token))?;
+        pyobject_to_version_build_job(obj)
+    }
+
+    /// `POST /datasets/versions/build-jobs/{job_id}/retry`
+    pub fn retry_version_build_job<T: ApiClient>(
+        client: &T,
+        job_id: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/versions/build-jobs/{}/retry",
+            job_id
+        );
+        client.make_request("POST".to_string(), endpoint, None, Some(token))
+    }
+
+    /// Poll until a version archive build job is terminal.
+    pub fn wait_for_version_build_job<T: ApiClient>(
+        client: &T,
+        job_id: &str,
+        poll_interval_secs: Option<f64>,
+        timeout_secs: Option<f64>,
+        on_progress: Option<PyObject>,
+    ) -> PyResult<Py<VersionBuildJob>> {
+        let interval = poll_interval_secs.unwrap_or(2.0).max(0.2);
+        let timeout = timeout_secs.unwrap_or(3600.0);
+        let start = std::time::Instant::now();
+        loop {
+            let job = Self::get_version_build_job(client, job_id)?;
+            if let Some(ref cb) = on_progress {
+                Python::with_gil(|py| {
+                    let bound = job.bind(py);
+                    let _ = cb.bind(py).call1((bound.clone(),));
+                });
+            }
+            let stop = Python::with_gil(|py| {
+                job.bind(py)
+                    .call_method0("is_wait_complete")?
+                    .extract::<bool>()
+            })?;
+            if stop {
+                return Ok(job);
+            }
+            if start.elapsed().as_secs_f64() >= timeout {
+                return Err(PyErr::new::<pyo3::exceptions::PyTimeoutError, _>(format!(
+                    "Timed out waiting for version build job {} after {}s",
+                    job_id, timeout
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_secs_f64(interval));
+        }
+    }
+
+    /// `GET /datasets/versions/{dataset_id}/{version_no}/package` — package manifest JSON.
+    pub fn get_dataset_version_package_manifest<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        version_no: &str,
+    ) -> PyResult<PyObject> {
+        let token = client.require_token()?;
+        let endpoint = format!(
+            "/data-micro-services/v2/datasets/versions/{}/{}/package",
+            dataset_id,
+            urlencoding::encode(version_no)
+        );
+        client.make_request("GET".to_string(), endpoint, None, Some(token))
+    }
+
+    /// Download a sharded version package (manifest + shards), extract into cache.
+    ///
+    /// Prefer this for large versions (Kappa ≥ 2.11). Falls back to the legacy single-zip
+    /// archive when the package endpoint is unavailable (404). Requires `buildStatus=ready`.
+    pub fn download_dataset_version_package<T: ApiClient>(
+        client: &T,
+        dataset_id: Option<i32>,
+        dataset_name: Option<String>,
+        version_id: Option<i32>,
+        version_no: Option<String>,
+        dataset_path: Option<String>,
+    ) -> PyResult<DatasetDownloadDetails> {
+        let token = client.require_token()?;
+        let dataset_path = dataset_path.unwrap_or_default();
+
+        let dataset_details = Self::get_dataset_details(
+            client,
+            dataset_id,
+            dataset_name.clone(),
+        )?;
+        let resolved_dataset_id = dataset_details.dataset_id;
+        let resolved_dataset_name = dataset_details.dataset_name.clone();
+
+        let resolved_version_id = version_id.unwrap_or(0);
+        let mut resolved_version_no = version_no.unwrap_or_default();
+        if resolved_version_id == 0 && resolved_version_no.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "version_id or version_no is required.",
+            ));
+        }
+
+        let dataset_version_details = Self::get_dataset_version_details(
+            client,
+            Some(resolved_dataset_id),
+            None,
+            Some(resolved_version_id),
+            Some(resolved_version_no.clone()),
+        )?;
+        if resolved_version_no.is_empty() {
+            resolved_version_no = dataset_version_details.version_no.clone();
+        }
+
+        let data_dir = if dataset_path.is_empty() {
+            let home_dir = dirs::home_dir().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("Could not determine home directory")
+            })?;
+            home_dir
+                .join("cache")
+                .join("kappa-framework")
+                .join("datasets")
+                .join(format!("{}_{}", resolved_dataset_name, resolved_version_no))
+        } else {
+            Path::new(&dataset_path)
+                .join(format!("{}_{}", resolved_dataset_name, resolved_version_no))
+        };
+
+        if cache_is_complete(&data_dir) {
+            return Ok(DatasetDownloadDetails {
+                dataset_id: resolved_dataset_id,
+                data_path: data_dir.to_string_lossy().to_string(),
+                version_no: resolved_version_no,
+                download_status: true,
+            });
+        }
+
+        let manifest_endpoint = format!(
+            "/data-micro-services/v2/datasets/versions/{}/{}/package",
+            resolved_dataset_id,
+            urlencoding::encode(&resolved_version_no)
+        );
+        let manifest_obj = match client.make_request(
+            "GET".to_string(),
+            manifest_endpoint,
+            None,
+            Some(token.clone()),
+        ) {
+            Ok(obj) => obj,
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("404") || msg.to_ascii_lowercase().contains("not found") {
+                    return Self::download_dataset_version_archive(
+                        client,
+                        Some(resolved_dataset_id),
+                        Some(resolved_dataset_name),
+                        Some(resolved_version_id),
+                        Some(resolved_version_no),
+                        if dataset_path.is_empty() {
+                            None
+                        } else {
+                            Some(dataset_path)
+                        },
+                    );
+                }
+                return Err(e);
+            }
+        };
+
+        let manifest = crate::utils::python_json::pyobject_to_rust_value(
+            &manifest_obj,
+            "version package manifest",
+        )?;
+        let shards = match package_download::plan_from_manifest(&manifest)? {
+            // Single-shard and legacy builds are still served as one zip.
+            package_download::PackagePlan::LegacyZip => {
+                return Self::download_dataset_version_archive(
+                    client,
+                    Some(resolved_dataset_id),
+                    Some(resolved_dataset_name),
+                    Some(resolved_version_id),
+                    Some(resolved_version_no),
+                    if dataset_path.is_empty() {
+                        None
+                    } else {
+                        Some(dataset_path)
+                    },
+                );
+            }
+            package_download::PackagePlan::Shards(names) => names,
+        };
+
+        let http = client.get_http_client();
+        let runtime = client.get_runtime();
+        let base_url = client.get_base_url();
+        let data_dir_dl = data_dir.clone();
+        let version_no_dl = resolved_version_no.clone();
+        let dataset_id_dl = resolved_dataset_id;
+
+        let result = runtime.block_on(async move {
+            let base = base_url.trim_end_matches('/').to_string();
+            let encoded_version = urlencoding::encode(&version_no_dl).into_owned();
+            package_download::download_shards(
+                &http,
+                &token,
+                &data_dir_dl,
+                &shards,
+                |name| {
+                    format!(
+                        "{}/data-micro-services/v2/datasets/versions/{}/{}/package/shards/{}",
+                        base,
+                        dataset_id_dl,
+                        encoded_version,
+                        package_download::encode_shard_name(name)
+                    )
+                },
+            )
+            .await?;
+
+            Ok(DatasetDownloadDetails {
+                dataset_id: dataset_id_dl,
+                data_path: data_dir_dl.to_string_lossy().to_string(),
+                version_no: version_no_dl,
+                download_status: true,
+            })
+        });
+        result
     }
 
     /// `GET /datasets/datasetEntities/files/{dataset_id}/{file_id}` — download entity file bytes to path.
@@ -2140,6 +2622,16 @@ tf_dataset = tf.data.Dataset.from_generator(
 fn pyobject_to_bulk_job(obj: PyObject) -> PyResult<Py<BulkUploadJob>> {
     let value = crate::utils::python_json::pyobject_to_rust_value(&obj, "bulk upload job")?;
     Python::with_gil(|py| Py::new(py, BulkUploadJob::from_json_value(value)))
+}
+
+fn pyobject_to_bulk_mutation_job(obj: PyObject) -> PyResult<Py<BulkMutationJob>> {
+    let value = crate::utils::python_json::pyobject_to_rust_value(&obj, "bulk mutation job")?;
+    Python::with_gil(|py| Py::new(py, BulkMutationJob::from_json_value(value)))
+}
+
+fn pyobject_to_version_build_job(obj: PyObject) -> PyResult<Py<VersionBuildJob>> {
+    let value = crate::utils::python_json::pyobject_to_rust_value(&obj, "version build job")?;
+    Python::with_gil(|py| Py::new(py, VersionBuildJob::from_json_value(value)))
 }
 
 fn validate_entity_file_parts(parts: &[(Vec<u8>, String)]) -> PyResult<()> {

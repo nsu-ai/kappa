@@ -1,7 +1,7 @@
 // Copyright 2025 Kappa-Apk @nsu.ru
 // SPDX-License-Identifier: Apache-2.0
 
-//! Client-side upload size / layout preflight (FE-aligned, Kappa ≥ 2.10.0).
+//! Client-side upload size / layout preflight (FE-aligned, Kappa ≥ 2.11.0).
 
 use pyo3::prelude::*;
 use std::path::Path;

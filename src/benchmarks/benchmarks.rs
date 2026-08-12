@@ -8,8 +8,8 @@ use std::env;
 use std::path::PathBuf;
 
 use crate::traits::ApiClient;
+use crate::benchmarks::benchmarks_api::BenchmarksApi;
 use crate::client::KappaApkClient;
-use crate::utils::zip_utils::{self, cache_is_complete};
 use crate::models::benchmarks_model::{
     Benchmark,
     BenchmarkResult,
@@ -33,6 +33,8 @@ pub struct Benchmarks {
     model_information: Option<Vec<FileInformation>>,
     file_information: Option<Vec<FileInformation>>,
     model_id_override: Option<String>,
+    /// Directory whose files describe the model; also the default artifact upload source.
+    model_path: Option<String>,
 }
 
 impl Benchmarks {
@@ -56,6 +58,7 @@ impl Benchmarks {
             model_information: None,
             file_information: None,
             model_id_override: None,
+            model_path: None,
         }
     }
 
@@ -155,55 +158,39 @@ impl Benchmarks {
         Ok(benchmark)
     }
 
-    /// Download benchmark dataset archive via the benchmark controller endpoint and load items.
+    /// Download the benchmark evaluation set and load its items.
     ///
-    /// Uses `GET /model-micro-services/v2/benchmarks/datasets/download/{benchmark_id}`.
-    /// Archives are cached under `~/cache/kappa-framework/benchmarks/{benchmark_id}/`;
-    /// a second call with the same benchmark skips the download entirely.
+    /// Follows the same order as the web client: the dataset-services package for the
+    /// benchmark's `datasetId` / `datasetVersionNo` first, then the benchmark proxy when
+    /// only `benchmark.read` is held. Each path uses the legacy single zip when the
+    /// manifest reports one. Downloads are cached under
+    /// `~/cache/kappa-framework/benchmarks/{benchmark_id}/`, so a second call is a no-op.
     pub fn internal_dataset(
         &mut self,
         dataset_path: Option<String>,
     ) -> PyResult<Vec<DatasetItem>> {
-        let dataset_path_str = dataset_path.unwrap_or_default();
         let benchmark_id = self.benchmark_id.clone();
+        // Reuse cached details when we have them so we skip one benchmark GET.
+        let coordinates = self
+            .benchmark_details
+            .as_ref()
+            .map(|bd| (bd.dataset_id, bd.dataset_version_no.clone()));
 
-        let data_dir: PathBuf = if dataset_path_str.is_empty() {
-            let home_dir = dirs::home_dir().ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>("Could not determine home directory")
-            })?;
-            home_dir
-                .join("cache")
-                .join("kappa-framework")
-                .join("benchmarks")
-                .join(&benchmark_id)
-        } else {
-            PathBuf::from(&dataset_path_str).join(&benchmark_id)
-        };
-
-        if !cache_is_complete(&data_dir) {
-            let (base_url, http_client, runtime, token) = Python::with_gil(|py| -> PyResult<_> {
-                let client = self.client.borrow(py);
-                let base_url = client.get_base_url();
-                let http_client = client.get_http_client();
-                let runtime = client.get_runtime();
-                let token = client.require_token()?;
-                Ok((base_url, http_client, runtime, token))
-            })?;
-
-            let url = format!(
-                "{}/model-micro-services/v2/benchmarks/datasets/download/{}",
-                base_url, benchmark_id
-            );
-            let data_dir_dl = data_dir.clone();
-
-            runtime.block_on(async move {
-                zip_utils::download_and_extract_zip(&http_client, &url, Some(&token), &data_dir_dl)
-                    .await
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(e)
-                    })
-            })?;
-        }
+        let data_path = Python::with_gil(|py| -> PyResult<String> {
+            let client = self.client.borrow(py);
+            let (dataset_id, version_no) = match coordinates {
+                Some((id, Some(no))) if id > 0 && !no.is_empty() => (Some(id), Some(no)),
+                _ => (None, None),
+            };
+            BenchmarksApi::download_benchmark_dataset_package(
+                &*client,
+                &benchmark_id,
+                dataset_id,
+                version_no,
+                dataset_path,
+            )
+        })?;
+        let data_dir = PathBuf::from(data_path);
 
         // Parse DatasetItems from the extracted directory
         let mut items: Vec<DatasetItem> = Vec::new();
@@ -303,6 +290,7 @@ impl Benchmarks {
             model_files.push(FileInformation { file_name, file_type, file_size, file_hash });
         }
         self.model_information = Some(model_files.clone());
+        self.model_path = Some(model_path);
         if let Some(result) = self.result.as_mut() {
             result.model_information = Some(model_files);
         }
@@ -350,18 +338,52 @@ impl Benchmarks {
     pub fn internal_submit_benchmark(
         &mut self,
         strict: bool,
+        model_version_id: Option<i32>,
+        complete_inference: bool,
+        upload_artifacts: bool,
+        artifact_paths: Option<Vec<String>>,
+        on_progress: Option<PyObject>,
     ) -> PyResult<PyObject> {
         let result = self.result.clone().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>("No benchmark result found. Call save_benchmark() first.")
         })?;
+        // Saving the inference alone leaves the benchmark at status 4; the link call below
+        // is what advances it, so resolve the version before we upload anything.
+        let link_version_id = if complete_inference {
+            match model_version_id {
+                Some(id) => Some(id),
+                None => self.details().ok().and_then(|bd| bd.model_version_id),
+            }
+        } else {
+            None
+        };
+        let artifact_paths = if upload_artifacts {
+            let paths = artifact_paths
+                .or_else(|| self.model_path.clone().map(|path| vec![path]))
+                .unwrap_or_default();
+            if paths.is_empty() {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "upload_artifacts=True needs artifact_paths, or a model_path passed to save_benchmark()/set_model_path().",
+                ));
+            }
+            paths
+        } else {
+            Vec::new()
+        };
+
+        let model_id = match self
+            .model_id_override
+            .clone()
+            .or_else(|| self.benchmark_details.as_ref().and_then(|bd| bd.model_id.clone()))
+        {
+            Some(id) => id,
+            None => self.details().ok().and_then(|bd| bd.model_id).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("Model ID not found.")
+            })?,
+        };
+
         let json_obj = Python::with_gil(|py| -> PyResult<PyObject> {
             let client = self.client.borrow(py);
-
-            let model_id = self.model_id_override.clone()
-                .or_else(|| self.benchmark_details.as_ref().and_then(|bd| bd.model_id.clone()))
-                .ok_or_else(|| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>("Model ID not found.")
-                })?;
 
             let payload = serde_json::json!({ "inferenceResult": result });
             let body = serde_json::to_string(&payload)
@@ -406,6 +428,57 @@ impl Benchmarks {
             );
             client.make_request("POST".to_string(), endpoint, Some(body), Some(token))
         })?;
+
+        if !artifact_paths.is_empty() {
+            let created = crate::utils::python_json::pyobject_to_rust_value(
+                &json_obj,
+                "create inference response",
+            )?;
+            let inference_id = created
+                .get("inferenceId")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Inference was saved but the server returned no inferenceId, so artifacts were not uploaded.",
+                    )
+                })? as i32;
+            Python::with_gil(|py| -> PyResult<()> {
+                let client = self.client.borrow(py);
+                crate::model_artifacts::ModelArtifactsApi::upload_model_artifacts(
+                    &*client,
+                    &model_id,
+                    inference_id,
+                    artifact_paths,
+                    Some(3),
+                    None,
+                    true,
+                    None,
+                    on_progress,
+                )
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Inference {} was saved but uploading its artifacts failed: {}",
+                        inference_id, e
+                    ))
+                })?;
+                Ok(())
+            })?;
+        }
+
+        if let Some(version_id) = link_version_id {
+            let benchmark_id = self.benchmark_id.clone();
+            Python::with_gil(|py| -> PyResult<()> {
+                let client = self.client.borrow(py);
+                BenchmarksApi::complete_benchmark_inference(&*client, &benchmark_id, version_id)
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Inference was saved but linking it to benchmark {} failed: {}",
+                            benchmark_id, e
+                        ))
+                    })?;
+                Ok(())
+            })?;
+        }
         Ok(json_obj)
     }
 }
@@ -523,20 +596,57 @@ impl Benchmarks {
         self.internal_save_benchmark(predictions_vec, metrics_map, model_path)
     }
 
-    /// Submit benchmark
-    /// 
-    /// # Parameters
-    /// 
-    /// # Returns
-    /// 
-    /// A benchmark result
-    /// ```python
+    /// The result built by the last :meth:`save_benchmark` call, if any.
+    #[getter]
+    pub fn saved_result(&self) -> Option<BenchmarkResult> {
+        self.result.clone()
+    }
+
     /// Submit the saved benchmark result as a model inference.
     ///
     /// When ``strict=True`` (default), validates against the model inference schema first.
-    #[pyo3(signature = (strict=true))]
-    pub fn submit_benchmark(&mut self, strict: bool) -> PyResult<PyObject> {
-        self.internal_submit_benchmark(strict)
+    ///
+    /// With ``complete_inference=True`` (default) the saved inference is then linked to the
+    /// benchmark, which moves it from *Pending Inference* to *Inference Completed*. The
+    /// model version comes from ``model_version_id`` or the benchmark's
+    /// ``mlmodelVersionId``; when neither is known the link step is skipped.
+    ///
+    /// ``upload_artifacts=True`` also uploads the model files themselves to the new
+    /// inference — ``artifact_paths`` when given, otherwise the ``model_path`` from
+    /// :meth:`save_benchmark`. Weight files past the server's sync cap take a resumable
+    /// multipart session, so multi-GB checkpoints work here. ``on_progress`` receives
+    /// ``(file_name, bytes_sent, total_bytes, percent)``.
+    ///
+    /// # Python Example
+    /// ```python
+    /// benchmark.save_benchmark(predictions, metrics, model_path="./model")
+    /// benchmark.submit_benchmark(upload_artifacts=True)
+    /// ```
+    #[pyo3(signature = (
+        strict=true,
+        model_version_id=None,
+        complete_inference=true,
+        upload_artifacts=false,
+        artifact_paths=None,
+        on_progress=None
+    ))]
+    pub fn submit_benchmark(
+        &mut self,
+        strict: bool,
+        model_version_id: Option<i32>,
+        complete_inference: bool,
+        upload_artifacts: bool,
+        artifact_paths: Option<Vec<String>>,
+        on_progress: Option<PyObject>,
+    ) -> PyResult<PyObject> {
+        self.internal_submit_benchmark(
+            strict,
+            model_version_id,
+            complete_inference,
+            upload_artifacts,
+            artifact_paths,
+            on_progress,
+        )
     }
 }
 

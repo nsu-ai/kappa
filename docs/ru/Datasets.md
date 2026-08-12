@@ -26,7 +26,14 @@ results = client.filter_datasets(
     page=1,
     size=20,
 )
+
+# Только свои / назначенные / предоставленные, со статусом сборки версии
+mine = client.filter_datasets(query_all=False, selected_version_no="1.0.0")
+for item in mine["items"]:
+    print(item["datasetName"], item.get("selectedVersionBuildStatus"))
 ```
+
+Нумерация страниц начинается с 1, ответ имеет вид `{items, total, page, size, pages}`. `query_all` по умолчанию равен `True` и дополнительно включает публичный каталог. Передача `selected_version_id` или `selected_version_no` добавляет к каждому элементу `selectedVersionNo` и `selectedVersionBuildStatus` — дешевле, чем отдельный запрос версии для каждого датасета, если нужно лишь узнать, готова ли версия.
 
 ---
 
@@ -80,16 +87,23 @@ client.add_dataset_entity(
 
 client.update_dataset_entity(42, "entity-uuid", UpdateDatasetEntity(remark="Исправлена метка"))
 entities = client.list_dataset_entities(42, version_id=7)
-page = client.filter_dataset_entities(42, entity_name="sample", page=0, size=20)
+page = client.filter_dataset_entities(42, entity_name="sample", page=1, size=20)
+
+# Только назначенные вам сущности, сначала новые
+mine = client.filter_dataset_entities(
+    42, assignment_filter="assigned", order_by="modifiedOn", order="DESC",
+)
 
 client.delete_dataset_entities(["uuid-1", "uuid-2"], remark="Дубликаты удалены")
 ```
+
+Страницы сущностей нумеруются **с 1**, как и страницы датасетов, а направление сортировки задаётся через `order` (не `order_keyword`). Дополнительно доступны `entity_id`, `location_id`, `start_date` и `end_date`. Фильтра по split на сервере нет — читайте `dsEntityInfo.split` из каждого элемента.
 
 Передайте `file_category="input"|"output"` и опционально `split="train"|"validation"|"test"` при создании/обновлении. Файлы одной сущности — до **2 GB**.
 
 ---
 
-## Массовая загрузка (Kappa ≥ 2.10.0)
+## Массовая загрузка (Kappa ≥ 2.11.0)
 
 Асинхронный job API. Пример: [`code_examples/bulk_upload.py`](../../code_examples/bulk_upload.py).
 
@@ -100,18 +114,37 @@ client.delete_dataset_entities(["uuid-1", "uuid-2"], remark="Дубликаты 
 
 Для `input_output` нужен `dataset_schema={"inputDataPath": "input", ...}`; для `classes` — непустой список `classes`. Пустой `{}` даёт 422. Файл **стримится** с диска.
 
-Поток операций с датасетом: [`dataset_operations_example.py`](../../code_examples/dataset_operations_example.py), lifecycle: [`dataset_lifecycle_example.py`](../../code_examples/dataset_lifecycle_example.py).
+Поток операций: [`dataset_operations_example.py`](../../code_examples/dataset_operations_example.py), lifecycle: [`dataset_lifecycle_example.py`](../../code_examples/dataset_lifecycle_example.py), мутации/сборки версий: [`bulk_mutation_and_version_build.py`](../../code_examples/bulk_mutation_and_version_build.py).
+
+---
+
+## Массовые мутации (Kappa ≥ 2.11.0)
+
+Self-verify, auto-verify, mark-labeled, delete/recover/delete-files ставят асинхронный job (`202` + `jobId`). Опрос через `BulkMutationJob`. Одновременно — один активный mutation на датасет (**409**).
+
+```python
+start = client.mark_dataset_entities_labeled(42, all_eligible=True)
+final = client.wait_for_bulk_mutation_job(42, start["jobId"])
+client.bulk_self_verify_dataset_entities(42, status=1)  # 1=Pass, 3=Needs Modification
+client.auto_verify_dataset_entities(42)
+```
 
 ---
 
 ## Версии
 
+На Kappa ≥ 2.11 create/refresh **ставят сборку архива**. Дождитесь готовности перед publish/download.
+
 ```python
 from kappa_apk import NewDatasetVersion
 
-client.create_dataset_version(42, NewDatasetVersion(version_availability=1, version_remark="Первый релиз"))
+created = client.create_dataset_version(
+    42, NewDatasetVersion(version_availability=1, version_remark="Первый релиз")
+)
+build = client.wait_for_version_build_job(created["jobId"])
+assert build.is_ready()
+client.publish_dataset_version(42, created["versionNo"], publish_type=2)
 versions = client.list_dataset_versions(42)
-client.publish_dataset_version(42, "1.0.0", publish_type=2)
 client.delete_dataset_version(42, "0.9.0")
 
 details = client.get_dataset_version_details(dataset_name="MyDS", version_no="1.0.0")
@@ -121,12 +154,16 @@ details = client.get_dataset_version_details(dataset_name="MyDS", version_no="1.
 
 ## Загрузка и кэш
 
+Используйте `download_dataset_version_package`: он читает манифест и качает шарды, а при отсутствии пакета (до 2.11 или один шард) откатывается на legacy-zip `download_dataset_version_archive`.
+
 Архивы загружаются в `~/cache/kappa-framework/datasets/{dataset_name}_{version_no}/`. Повторные вызовы пропускают загрузку, если каталог кэша уже существует.
 
 ```python
-info = client.download_dataset_version_archive(dataset_name="MyDS", version_no="1.0.0")
+info = client.download_dataset_version_package(dataset_name="MyDS", version_no="1.0.0")
 print(info.data_path)
 ```
+
+`load_kappa_dataset` и `get_dataset_loader` используют путь пакета автоматически. На Kappa ≥ 2.11 единый zip остаётся только для версий в один шард (по умолчанию 2 GB / 50 000 файлов), поэтому крупные версии доступны только через пакет.
 
 При распаковке ZIP проверяются пути (защита от zip-slip через проверку префикса путей извлечения).
 

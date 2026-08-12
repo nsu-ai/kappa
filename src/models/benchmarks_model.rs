@@ -15,7 +15,10 @@ pub struct Benchmark {
     pub model_id: Option<String>,
     pub dataset_id: i32,
     pub dataset_version_id: i32,
+    /// Version number string (e.g. `"1.0.0"`); the package download routes key off this.
     #[serde(default)]
+    pub dataset_version_no: Option<String>,
+    #[serde(rename = "mlmodelVersionId", default)]
     pub model_version_id: Option<i32>,
     #[serde(default)]
     pub benchmark_description: Option<String>,
@@ -82,4 +85,39 @@ pub struct BenchmarkResult {
     pub model_information: Option<Vec<FileInformation>>,
     pub file_information: Option<Vec<FileInformation>>,
     pub results: Results,
+}
+
+#[pymethods]
+impl BenchmarkResult {
+    #[getter]
+    fn benchmark_id(&self) -> String {
+        self.benchmark_id.clone()
+    }
+
+    /// The result exactly as it is sent to the model service (`inferenceResult`).
+    fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        crate::utils::python_json::rust_value_to_pyobject(py, self)
+    }
+
+    fn __repr__(&self) -> String {
+        let metrics = self
+            .results
+            .metrics
+            .as_ref()
+            .map(|m| m.len())
+            .unwrap_or_default();
+        let files = self
+            .model_information
+            .as_ref()
+            .or(self.file_information.as_ref())
+            .map(|f| f.len())
+            .unwrap_or_default();
+        format!(
+            "BenchmarkResult(benchmark_id='{}', predictions={}, metrics={}, files={})",
+            self.benchmark_id,
+            self.results.predictions.len(),
+            metrics,
+            files
+        )
+    }
 }

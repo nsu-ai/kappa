@@ -5,7 +5,13 @@
 
 use pyo3::prelude::*;
 
+use crate::model_artifacts::ModelArtifactsApi;
 use crate::traits::ApiClient;
+
+/// The server refuses oversized sync uploads and tells the caller to use this SDK instead.
+fn is_sync_too_large(message: &str) -> bool {
+    message.contains("413") || message.to_ascii_uppercase().contains("USE_KAPPA_APK")
+}
 
 pub struct ModelsApi;
 
@@ -354,71 +360,16 @@ impl ModelsApi {
         )
     }
 
-    // --- benchmarks registry ---
-
-    pub fn list_benchmarks<T: ApiClient>(client: &T) -> PyResult<PyObject> {
-        let endpoint = "/model-micro-services/v2/benchmarks".to_string();
-        client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
-    }
-
-    pub fn create_benchmark<T: ApiClient>(client: &T, body_json: String) -> PyResult<PyObject> {
-        let endpoint = "/model-micro-services/v2/benchmarks".to_string();
-        client.make_request(
-            "POST".to_string(),
-            endpoint,
-            Some(body_json),
-            Some(client.require_token()?),
-        )
-    }
-
-    pub fn update_benchmark<T: ApiClient>(
-        client: &T,
-        benchmark_id: &str,
-        body_json: String,
-    ) -> PyResult<PyObject> {
-        let endpoint = format!("/model-micro-services/v2/benchmarks/{}", benchmark_id);
-        client.make_request(
-            "PUT".to_string(),
-            endpoint,
-            Some(body_json),
-            Some(client.require_token()?),
-        )
-    }
-
-    pub fn delete_benchmark<T: ApiClient>(client: &T, benchmark_id: &str) -> PyResult<PyObject> {
-        let endpoint = format!("/model-micro-services/v2/benchmarks/{}", benchmark_id);
-        client.make_request(
-            "DELETE".to_string(),
-            endpoint,
-            None,
-            Some(client.require_token()?),
-        )
-    }
-
-    /// Mark benchmark inference complete for a model version (distinct from model inference POST).
-    pub fn complete_benchmark_inference<T: ApiClient>(
-        client: &T,
-        benchmark_id: &str,
-        model_version_id: i32,
-    ) -> PyResult<PyObject> {
-        let endpoint = format!(
-            "/model-micro-services/v2/benchmarks/inferences/{}/{}",
-            benchmark_id, model_version_id
-        );
-        client.make_request(
-            "POST".to_string(),
-            endpoint,
-            None,
-            Some(client.require_token()?),
-        )
-    }
-
     // --- inference / version artifacts ---
 
     /// Upload or replace an inference artifact file.
     ///
     /// `file_category`: 1 Training, 2 Inference (default), 3 Model, 4 Data, 5 Other.
     /// `replace`: when true uses PATCH, otherwise POST.
+    /// `use_session`: `None` picks the transport automatically — a multipart upload session
+    /// for files past the server's sync cap, otherwise the plain multipart POST/PATCH with a
+    /// session retry if the server rejects the size (`413 USE_KAPPA_APK`). Sessions always
+    /// upsert by file name, so `replace` does not apply to them.
     pub fn upload_model_inference_file<T: ApiClient>(
         client: &T,
         model_id: &str,
@@ -426,6 +377,7 @@ impl ModelsApi {
         file_path: &str,
         file_category: Option<i32>,
         replace: bool,
+        use_session: Option<bool>,
     ) -> PyResult<PyObject> {
         let category = file_category.unwrap_or(2);
         if !(1..=5).contains(&category) {
@@ -433,6 +385,32 @@ impl ModelsApi {
                 "file_category must be 1–5 (1 Training, 2 Inference, 3 Model, 4 Data, 5 Other)",
             ));
         }
+        let byte_len = std::fs::metadata(file_path)
+            .map(|m| m.len())
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Cannot read file {}: {}",
+                    file_path, e
+                ))
+            })?;
+        let session_upload = || {
+            ModelArtifactsApi::upload_model_artifact_session(
+                client,
+                model_id,
+                inference_id,
+                file_path,
+                Some(category),
+                None,
+            )
+        };
+        match use_session {
+            Some(true) => return session_upload(),
+            None if ModelArtifactsApi::requires_upload_session(byte_len) => {
+                return session_upload();
+            }
+            _ => {}
+        }
+
         let bytes = std::fs::read(file_path).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Cannot read file {}: {}",
@@ -449,14 +427,20 @@ impl ModelsApi {
             model_id, inference_id, category
         );
         let method = if replace { "PATCH" } else { "POST" };
-        client.submit_named_file(
+        let result = client.submit_named_file(
             method,
             endpoint,
             "file",
             bytes,
             fname,
             Some(client.require_token()?),
-        )
+        );
+        match result {
+            Err(e) if use_session.is_none() && is_sync_too_large(&e.to_string()) => {
+                session_upload()
+            }
+            other => other,
+        }
     }
 
     pub fn download_model_inference_artifacts<T: ApiClient>(
@@ -465,11 +449,12 @@ impl ModelsApi {
         inference_id: i32,
         dest_path: &str,
     ) -> PyResult<String> {
-        let endpoint = format!(
-            "/model-micro-services/v2/models/inferences/files/{}/{}/zip",
-            model_id, inference_id
-        );
-        write_download(client, endpoint, dest_path)
+        ModelArtifactsApi::download_inference_artifacts_zip(
+            client,
+            model_id,
+            inference_id,
+            dest_path,
+        )
     }
 
     pub fn download_model_version_artifacts<T: ApiClient>(
@@ -478,11 +463,7 @@ impl ModelsApi {
         version_id: i32,
         dest_path: &str,
     ) -> PyResult<String> {
-        let endpoint = format!(
-            "/model-micro-services/v2/models/versions/{}/{}/artifacts/zip",
-            model_id, version_id
-        );
-        write_download(client, endpoint, dest_path)
+        ModelArtifactsApi::download_version_artifacts_zip(client, model_id, version_id, dest_path)
     }
 
     pub fn get_model_version_inference<T: ApiClient>(
@@ -522,27 +503,3 @@ impl ModelsApi {
     }
 }
 
-fn write_download<T: ApiClient>(
-    client: &T,
-    endpoint: String,
-    dest_path: &str,
-) -> PyResult<String> {
-    let bytes = client.download_bytes(endpoint, Some(client.require_token()?))?;
-    if let Some(parent) = std::path::Path::new(dest_path).parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                "Failed to create parent dir for {}: {}",
-                dest_path, e
-            ))
-        })?;
-    }
-    std::fs::write(dest_path, bytes).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-            "Failed to write {}: {}",
-            dest_path, e
-        ))
-    })?;
-    Ok(dest_path.to_string())
-}
