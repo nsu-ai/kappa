@@ -77,6 +77,8 @@ def run_benchmark(
     bm.save_benchmark(predictions, {"accuracy": 0.0}, model_path=model_path)
     # complete_inference (default) also links the inference to the benchmark,
     # which is what moves it from Pending Inference to Inference Completed.
+    # The link needs a model version: pass model_version_id, or let create_version
+    # (default) version the inference that was just written.
     # upload_artifacts stores the files under model_path on that inference.
     response = bm.submit_benchmark(
         strict=False,

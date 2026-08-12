@@ -37,11 +37,17 @@ response = bm.submit_benchmark(upload_artifacts=True)   # инференс + в�
 | `debug_benchmark_details()` | Человекочитаемая строка статуса |
 | `save_benchmark(predictions, metrics?, model_path?)` | Формирование `BenchmarkResult` в памяти |
 | `saved_result` | Последний сохранённый `BenchmarkResult` или `None` |
-| `submit_benchmark(strict?, model_version_id?, complete_inference?, upload_artifacts?, artifact_paths?, on_progress?)` | `POST …/models/inferences/{model_id}`, загрузка артефактов, затем привязка к бенчмарку |
+| `submit_benchmark(strict?, model_version_id?, complete_inference?, create_version?, upload_artifacts?, artifact_paths?, on_progress?)` | `POST …/models/inferences/{model_id}`, загрузка артефактов, затем привязка к бенчмарку |
 
 `save_benchmark` принимает результаты только с predictions, или прикрепляет метаданные модели/приложения из `setup_project()`, `model_path` или ранее установленного `set_model_path`.
 
-Сохранение инференса само по себе оставляет бенчмарк в статусе *Pending Inference*. Поэтому `submit_benchmark()` дополнительно вызывает `POST …/benchmarks/inferences/{benchmark_id}/{model_version_id}`, что переводит бенчмарк в *Inference Completed*. Версия берётся из `model_version_id` или из `mlmodelVersionId` бенчмарка; передайте `complete_inference=False`, чтобы отправить результат без привязки.
+Сохранение инференса само по себе оставляет бенчмарк в статусе *Pending Inference*. Поэтому `submit_benchmark()` дополнительно вызывает `POST …/benchmarks/inferences/{benchmark_id}/{model_version_id}`, что переводит бенчмарк в *Inference Completed*. Этой привязке нужна **версия модели**, иначе сервер отвечает `404 MODEL_VERSION_NOT_FOUND`. Версия определяется по порядку:
+
+1. `model_version_id`, если передан;
+2. `mlmodelVersionId` бенчмарка, если версию уже назначил мейнтейнер (у новых бенчмарков там `0` — не подходит);
+3. версия, содержащая только что отправленный инференс: при `create_version=True` (по умолчанию) она создаётся через `POST …/models/versions/{model_id}`, если её ещё нет.
+
+Передайте `create_version=False`, чтобы вместо неявного создания версии получить ошибку, или `complete_inference=False`, чтобы отправить результаты без привязки.
 
 `save_benchmark(model_path=…)` записывает только *метаданные* файлов (имя, размер, хэш). Чтобы сохранить сами веса, добавьте `upload_artifacts=True`:
 

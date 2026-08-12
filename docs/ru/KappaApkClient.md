@@ -146,7 +146,7 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 | `load_benchmark(benchmark_id)` | Возвращает объект `Benchmarks` (загрузка через API бенчмарков v2) |
 | `filter_benchmarks(...)` / `list_benchmarks()` | `GET /model-micro-services/v2/benchmarks` |
 | `get_benchmark(id)` / `create_benchmark` / `update_benchmark` / `delete_benchmark` | `…/benchmarks[/{id}]` |
-| `complete_benchmark_inference(id, model_version_id)` | `POST …/benchmarks/inferences/{id}/{version_id}` |
+| `complete_benchmark_inference(id, model_version_id)` | `POST …/benchmarks/inferences/{id}/{version_id}` — `version_id` должен быть существующей версией модели, иначе `404 MODEL_VERSION_NOT_FOUND` |
 | `download_benchmark_dataset_package(id, dataset_id?, version_no?, dataset_path?)` | пакет датасета → прокси бенчмарка → legacy zip |
 | `get_benchmark_dataset_package_manifest(id)` | `GET …/benchmarks/datasets/{id}/package` |
 | `list_benchmark_remarks` / `add_benchmark_remark` | `…/benchmarks/{id}/remarks` |

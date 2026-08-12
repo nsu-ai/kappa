@@ -51,9 +51,9 @@ pub enum MetricValue {
 #[serde(rename_all = "camelCase")]
 pub struct Prediction {
     pub entity_id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicted: Option<serde_json::Value>,
 }
 
@@ -61,6 +61,7 @@ pub struct Prediction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Results {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<HashMap<String, MetricValue>>,
     pub predictions: Vec<Prediction>,
 }
@@ -82,7 +83,11 @@ pub struct BenchmarkResult {
     pub benchmark_id: String,
     #[serde(default)]
     pub model_id: String,
+    // The server's schema types these as arrays, so an absent collection has to be
+    // omitted from the document rather than sent as null.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_information: Option<Vec<FileInformation>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_information: Option<Vec<FileInformation>>,
     pub results: Results,
 }
@@ -119,5 +124,48 @@ impl BenchmarkResult {
             metrics,
             files
         )
+    }
+}
+
+#[cfg(test)]
+mod benchmark_result_tests {
+    use super::*;
+
+    fn result_with(files: Option<Vec<FileInformation>>) -> BenchmarkResult {
+        BenchmarkResult {
+            benchmark_id: "b1".to_string(),
+            model_id: "m1".to_string(),
+            model_information: files,
+            file_information: None,
+            results: Results {
+                metrics: None,
+                predictions: vec![Prediction {
+                    entity_id: "e1".to_string(),
+                    original: None,
+                    predicted: Some(serde_json::json!({"class_name": "pizza"})),
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn absent_file_metadata_is_omitted() {
+        let document = serde_json::to_value(result_with(None)).unwrap();
+        assert!(document.get("modelInformation").is_none());
+        assert!(document.get("fileInformation").is_none());
+        assert!(document["results"].get("metrics").is_none());
+        assert!(document["results"]["predictions"][0].get("original").is_none());
+    }
+
+    #[test]
+    fn attached_model_files_are_serialized() {
+        let files = vec![FileInformation {
+            file_name: "model.pth".to_string(),
+            file_type: "pth".to_string(),
+            file_size: 700,
+            file_hash: "abc".to_string(),
+        }];
+        let document = serde_json::to_value(result_with(Some(files))).unwrap();
+        assert_eq!(document["modelInformation"][0]["fileName"], "model.pth");
     }
 }

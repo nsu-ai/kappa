@@ -502,6 +502,7 @@ class Benchmarks:
         strict: bool = True,
         model_version_id: Optional[int] = None,
         complete_inference: bool = True,
+        create_version: bool = True,
         upload_artifacts: bool = False,
         artifact_paths: Optional[list[str]] = None,
         on_progress: Optional[Any] = None,
@@ -513,8 +514,10 @@ class Benchmarks:
 
         With *complete_inference* (default) the saved inference is then linked to the
         benchmark, moving it from *Pending Inference* to *Inference Completed*. The model
-        version comes from *model_version_id* or the benchmark's ``mlmodelVersionId``; when
-        neither is known the link step is skipped.
+        version comes from *model_version_id*, else the benchmark's ``mlmodelVersionId``
+        when one was assigned, else the version holding the inference just saved — which
+        *create_version* (default True) creates when it does not exist yet. Pass
+        ``create_version=False`` to fail instead of creating a version implicitly.
 
         With *upload_artifacts* the model files are uploaded to the new inference —
         *artifact_paths* (files and/or directories) when given, otherwise the ``model_path``

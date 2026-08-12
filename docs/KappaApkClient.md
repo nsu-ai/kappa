@@ -148,7 +148,7 @@ Cache root: `~/cache/kappa-framework/datasets/{name}_{version}/`
 | `load_benchmark(benchmark_id)` | Returns `Benchmarks` handle (loads details via v2 benchmark API) |
 | `filter_benchmarks(...)` / `list_benchmarks()` | `GET /model-micro-services/v2/benchmarks` |
 | `get_benchmark(id)` / `create_benchmark` / `update_benchmark` / `delete_benchmark` | `…/benchmarks[/{id}]` |
-| `complete_benchmark_inference(id, model_version_id)` | `POST …/benchmarks/inferences/{id}/{version_id}` |
+| `complete_benchmark_inference(id, model_version_id)` | `POST …/benchmarks/inferences/{id}/{version_id}` — `version_id` must be an existing model version, else `404 MODEL_VERSION_NOT_FOUND` |
 | `download_benchmark_dataset_package(id, dataset_id?, version_no?, dataset_path?)` | dataset package → benchmark proxy → legacy zip |
 | `get_benchmark_dataset_package_manifest(id)` | `GET …/benchmarks/datasets/{id}/package` |
 | `list_benchmark_remarks` / `add_benchmark_remark` | `…/benchmarks/{id}/remarks` |

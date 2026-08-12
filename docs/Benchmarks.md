@@ -37,11 +37,17 @@ response = bm.submit_benchmark(upload_artifacts=True)   # inference + weights + 
 | `debug_benchmark_details()` | Human-readable status string |
 | `save_benchmark(predictions, metrics?, model_path?)` | Build `BenchmarkResult` in memory |
 | `saved_result` | The last saved `BenchmarkResult`, or `None` |
-| `submit_benchmark(strict?, model_version_id?, complete_inference?, upload_artifacts?, artifact_paths?, on_progress?)` | `POST …/models/inferences/{model_id}`, upload artifacts, then link it to the benchmark |
+| `submit_benchmark(strict?, model_version_id?, complete_inference?, create_version?, upload_artifacts?, artifact_paths?, on_progress?)` | `POST …/models/inferences/{model_id}`, upload artifacts, then link it to the benchmark |
 
 `save_benchmark` accepts predictions-only results, or attaches model/application metadata from `setup_project()`, `model_path`, or prior `set_model_path`.
 
-Saving an inference alone leaves the benchmark at *Pending Inference*. `submit_benchmark()` therefore also calls `POST …/benchmarks/inferences/{benchmark_id}/{model_version_id}`, which advances it to *Inference Completed*. The version comes from `model_version_id` or the benchmark's `mlmodelVersionId`; pass `complete_inference=False` to submit without linking.
+Saving an inference alone leaves the benchmark at *Pending Inference*. `submit_benchmark()` therefore also calls `POST …/benchmarks/inferences/{benchmark_id}/{model_version_id}`, which advances it to *Inference Completed*. That link needs a **model version**, and the endpoint rejects anything else with `404 MODEL_VERSION_NOT_FOUND`. The version is resolved in this order:
+
+1. `model_version_id`, when you pass one;
+2. the benchmark's `mlmodelVersionId`, when a maintainer already assigned a version (new benchmarks carry `0`, which does not count);
+3. the version built from the inference just submitted — `create_version=True` (default) creates it via `POST …/models/versions/{model_id}` when it does not exist yet.
+
+Pass `create_version=False` to raise instead of creating a version implicitly, or `complete_inference=False` to submit the results without linking at all.
 
 `save_benchmark(model_path=…)` only records file *metadata* (name, size, hash). To store the weights themselves, add `upload_artifacts=True`:
 
