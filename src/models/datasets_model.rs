@@ -955,9 +955,338 @@ impl BulkUploadJob {
         )
     }
 }
+/// Snapshot of a bulk-mutation job (`GET …/bulk-mutation/jobs/{jobId}`).
+///
+/// Covers self-verify, auto-verify, mark-labeled, delete, recover, delete-files (Kappa ≥ 2.11).
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct BulkMutationJob {
+    raw: serde_json::Value,
+}
+
+impl BulkMutationJob {
+    pub fn from_json_value(value: serde_json::Value) -> Self {
+        BulkMutationJob { raw: value }
+    }
+
+    fn str_field(&self, camel: &str, snake: &str) -> Option<String> {
+        self.raw
+            .get(camel)
+            .or_else(|| self.raw.get(snake))
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    Some(s.to_string())
+                } else if v.is_null() {
+                    None
+                } else {
+                    Some(v.to_string())
+                }
+            })
+    }
+
+    fn i64_field(&self, camel: &str, snake: &str) -> i64 {
+        self.raw
+            .get(camel)
+            .or_else(|| self.raw.get(snake))
+            .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|u| u as i64)))
+            .unwrap_or(0)
+    }
+
+    fn bool_field(&self, camel: &str, snake: &str) -> bool {
+        self.raw
+            .get(camel)
+            .or_else(|| self.raw.get(snake))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+}
+
+#[pymethods]
+impl BulkMutationJob {
+    #[getter]
+    fn job_id(&self) -> String {
+        self.str_field("jobId", "job_id").unwrap_or_default()
+    }
+
+    #[getter]
+    fn dataset_id(&self) -> i32 {
+        self.i64_field("datasetId", "dataset_id") as i32
+    }
+
+    #[getter]
+    fn job_type(&self) -> String {
+        self.str_field("jobType", "job_type").unwrap_or_default()
+    }
+
+    #[getter]
+    fn status(&self) -> String {
+        self.str_field("status", "status").unwrap_or_default()
+    }
+
+    #[getter]
+    fn phase(&self) -> Option<String> {
+        self.str_field("phase", "phase")
+    }
+
+    #[getter]
+    fn total_count(&self) -> i64 {
+        self.i64_field("totalCount", "total_count")
+    }
+
+    #[getter]
+    fn processed_count(&self) -> i64 {
+        self.i64_field("processedCount", "processed_count")
+    }
+
+    #[getter]
+    fn succeeded_count(&self) -> i64 {
+        self.i64_field("succeededCount", "succeeded_count")
+    }
+
+    #[getter]
+    fn skipped_count(&self) -> i64 {
+        self.i64_field("skippedCount", "skipped_count")
+    }
+
+    #[getter]
+    fn failed_count(&self) -> i64 {
+        self.i64_field("failedCount", "failed_count")
+    }
+
+    /// Backend `overallPercent` when present; else derived from processed/total.
+    #[getter]
+    fn percent(&self) -> Option<i32> {
+        if let Some(v) = self
+            .raw
+            .get("overallPercent")
+            .or_else(|| self.raw.get("overall_percent"))
+            .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|u| u as i64)))
+        {
+            return Some((v as i32).clamp(0, 100));
+        }
+        let total = self.total_count();
+        if total <= 0 {
+            return None;
+        }
+        let pct = ((self.processed_count() as f64) * 100.0 / (total as f64)).round() as i32;
+        Some(pct.clamp(0, 100))
+    }
+
+    #[getter]
+    fn eta_human(&self) -> Option<String> {
+        self.str_field("etaHuman", "eta_human")
+    }
+
+    #[getter]
+    fn error_detail(&self) -> Option<String> {
+        self.str_field("errorDetail", "error_detail")
+    }
+
+    #[getter]
+    fn can_cancel(&self) -> bool {
+        self.bool_field("canCancel", "can_cancel")
+    }
+
+    /// True for `succeeded` / `failed` / `cancelled`.
+    fn is_terminal(&self) -> bool {
+        matches!(
+            self.status().to_ascii_lowercase().as_str(),
+            "succeeded" | "failed" | "error" | "cancelled" | "canceled"
+        )
+    }
+
+    fn is_wait_complete(&self) -> bool {
+        self.is_terminal()
+    }
+
+    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let json_str = serde_json::to_string(&self.raw).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+        })?;
+        let json_mod = py.import("json")?;
+        Ok(json_mod.call_method1("loads", (json_str,))?.into())
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BulkMutationJob(job_id={:?}, job_type={:?}, status={:?}, percent={:?}, phase={:?})",
+            self.job_id(),
+            self.job_type(),
+            self.status(),
+            self.percent(),
+            self.phase()
+        )
+    }
+}
+
+/// Snapshot of a dataset version archive build job (`GET …/versions/build-jobs/{jobId}`).
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct VersionBuildJob {
+    raw: serde_json::Value,
+}
+
+impl VersionBuildJob {
+    pub fn from_json_value(value: serde_json::Value) -> Self {
+        VersionBuildJob { raw: value }
+    }
+
+    fn str_field(&self, camel: &str, snake: &str) -> Option<String> {
+        self.raw
+            .get(camel)
+            .or_else(|| self.raw.get(snake))
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    Some(s.to_string())
+                } else if v.is_null() {
+                    None
+                } else {
+                    Some(v.to_string())
+                }
+            })
+    }
+
+    fn i64_field(&self, camel: &str, snake: &str) -> i64 {
+        self.raw
+            .get(camel)
+            .or_else(|| self.raw.get(snake))
+            .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|u| u as i64)))
+            .unwrap_or(0)
+    }
+}
+
+#[pymethods]
+impl VersionBuildJob {
+    #[getter]
+    fn job_id(&self) -> String {
+        self.str_field("jobId", "job_id").unwrap_or_default()
+    }
+
+    #[getter]
+    fn dataset_id(&self) -> i32 {
+        self.i64_field("datasetId", "dataset_id") as i32
+    }
+
+    #[getter]
+    fn version_id(&self) -> i32 {
+        self.i64_field("versionId", "version_id") as i32
+    }
+
+    #[getter]
+    fn version_no(&self) -> String {
+        self.str_field("versionNo", "version_no").unwrap_or_default()
+    }
+
+    #[getter]
+    fn job_type(&self) -> String {
+        self.str_field("jobType", "job_type").unwrap_or_default()
+    }
+
+    #[getter]
+    fn status(&self) -> String {
+        self.str_field("status", "status").unwrap_or_default()
+    }
+
+    #[getter]
+    fn phase(&self) -> Option<String> {
+        self.str_field("phase", "phase")
+    }
+
+    #[getter]
+    fn total_entities(&self) -> i64 {
+        self.i64_field("totalEntities", "total_entities")
+    }
+
+    #[getter]
+    fn processed_entities(&self) -> i64 {
+        self.i64_field("processedEntities", "processed_entities")
+    }
+
+    #[getter]
+    fn shards_total(&self) -> i64 {
+        self.i64_field("shardsTotal", "shards_total")
+    }
+
+    #[getter]
+    fn shards_uploaded(&self) -> i64 {
+        self.i64_field("shardsUploaded", "shards_uploaded")
+    }
+
+    #[getter]
+    fn percent(&self) -> Option<i32> {
+        if let Some(v) = self
+            .raw
+            .get("overallPercent")
+            .or_else(|| self.raw.get("overall_percent"))
+            .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|u| u as i64)))
+        {
+            return Some((v as i32).clamp(0, 100));
+        }
+        let total = self.total_entities();
+        if total <= 0 {
+            return None;
+        }
+        let pct =
+            ((self.processed_entities() as f64) * 100.0 / (total as f64)).round() as i32;
+        Some(pct.clamp(0, 100))
+    }
+
+    #[getter]
+    fn eta_human(&self) -> Option<String> {
+        self.str_field("etaHuman", "eta_human")
+    }
+
+    #[getter]
+    fn error_json(&self) -> Option<String> {
+        self.str_field("errorJson", "error_json")
+    }
+
+    /// True for `completed` / `failed` / `cancelled`.
+    fn is_terminal(&self) -> bool {
+        matches!(
+            self.status().to_ascii_lowercase().as_str(),
+            "completed" | "complete" | "failed" | "error" | "cancelled" | "canceled"
+        )
+    }
+
+    fn is_wait_complete(&self) -> bool {
+        self.is_terminal()
+    }
+
+    /// True when the build finished successfully (archive ready to publish/download).
+    fn is_ready(&self) -> bool {
+        matches!(
+            self.status().to_ascii_lowercase().as_str(),
+            "completed" | "complete"
+        ) || self
+            .phase()
+            .map(|p| p.eq_ignore_ascii_case("ready"))
+            .unwrap_or(false)
+    }
+
+    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let json_str = serde_json::to_string(&self.raw).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+        })?;
+        let json_mod = py.import("json")?;
+        Ok(json_mod.call_method1("loads", (json_str,))?.into())
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "VersionBuildJob(job_id={:?}, version_no={:?}, status={:?}, percent={:?}, phase={:?})",
+            self.job_id(),
+            self.version_no(),
+            self.status(),
+            self.percent(),
+            self.phase()
+        )
+    }
+}
+
 #[cfg(test)]
 mod bulk_upload_job_tests {
-    use super::BulkUploadJob;
+    use super::{BulkMutationJob, BulkUploadJob, VersionBuildJob};
     use serde_json::json;
 
     #[test]
@@ -989,5 +1318,37 @@ mod bulk_upload_job_tests {
         assert!(!job.is_terminal());
         assert!(job.needs_correction());
         assert!(job.is_wait_complete());
+    }
+
+    #[test]
+    fn mutation_job_terminal_statuses() {
+        let ok = BulkMutationJob::from_json_value(json!({
+            "jobId": "m1",
+            "status": "succeeded",
+            "overallPercent": 100
+        }));
+        assert!(ok.is_terminal());
+        assert_eq!(ok.percent(), Some(100));
+
+        let run = BulkMutationJob::from_json_value(json!({
+            "jobId": "m1",
+            "status": "running",
+            "totalCount": 10,
+            "processedCount": 5
+        }));
+        assert!(!run.is_wait_complete());
+        assert_eq!(run.percent(), Some(50));
+    }
+
+    #[test]
+    fn version_build_job_ready() {
+        let job = VersionBuildJob::from_json_value(json!({
+            "jobId": "b1",
+            "status": "completed",
+            "phase": "ready",
+            "versionNo": "1.0.0"
+        }));
+        assert!(job.is_terminal());
+        assert!(job.is_ready());
     }
 }

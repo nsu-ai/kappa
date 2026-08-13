@@ -14,15 +14,15 @@ Built with Rust + [PyO3](https://pyo3.rs). **PyPI:** `kf-sdk` · **import:** `im
 
 | | |
 |---|---|
-| **Version** | 3.0.3 |
-| **Requires Kappa** | **≥ 2.10.0** (`min_backend_version()`) |
+| **Version** | 3.0.4 |
+| **Requires Kappa** | **≥ 2.11.0** (`min_backend_version()`) |
 | **Python** | 3.9+ |
 | **Rust edition** | 2024 |
 | **License** | BSD-3-Clause ([LICENSE.md](LICENSE.md)) |
 
 ---
 
-# Kappa — ϰ-framework for dataset and model management, version 3.0.3
+# Kappa — ϰ-framework for dataset and model management, version 3.0.4
 
 Kappa is a conceptual and software framework for dataset curation and model lifecycle management, developed at the [AI Research Center](https://nsu.ru/n/ai-center) for Construction and Urban Environment, Novosibirsk State University.
 
@@ -138,8 +138,8 @@ with KappaApkClient(base_url, "user@example.com", "secret") as client:
     page = client.list_datasets(size=50)
     print(page["items"])
 
-    # Download a dataset version archive (cached on disk)
-    info = client.download_dataset_version_archive(
+    # Download a dataset version (sharded package, cached on disk)
+    info = client.download_dataset_version_package(
         dataset_id=582,
         version_no="1.0.0",
     )

@@ -69,7 +69,7 @@ with KappaApkClient(base_url, login_id, passwd) as client:
 
 ```python
 import kappa_apk
-print(kappa_apk.version())   # "3.0.3"
+print(kappa_apk.version())   # "3.0.4"
 ```
 
 ---

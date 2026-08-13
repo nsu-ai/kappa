@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bulk entity upload + job progress example (Kappa-framework ≥ 2.10.0).
+"""Bulk entity upload + job progress example (Kappa-framework ≥ 2.11.0).
 
 Requires: ``pip install kf-sdk`` (or local maturin) and a dataset you can write to.
 

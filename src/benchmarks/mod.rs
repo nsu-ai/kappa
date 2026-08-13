@@ -2,4 +2,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod benchmarks;
+pub mod benchmarks_api;
 pub mod verifications;

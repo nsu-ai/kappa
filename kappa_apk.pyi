@@ -9,7 +9,7 @@ def version() -> str:
     ...
 
 def min_backend_version() -> str:
-    """Minimum Kappa-framework product version required (``\"2.10.0\"``)."""
+    """Minimum Kappa-framework product version required (``\"2.11.0\"``)."""
     ...
 
 def compatibility_info() -> dict[str, Any]:
@@ -115,6 +115,79 @@ class BulkUploadJob:
         """True when status is ``needs_correction`` (fix layout and retry)."""
         ...
 
+    def as_dict(self) -> dict[str, Any]: ...
+
+class BulkMutationJob:
+    """Status snapshot for an async bulk mutation job (self-verify, mark-labeled, …)."""
+
+    @property
+    def job_id(self) -> str: ...
+    @property
+    def dataset_id(self) -> int: ...
+    @property
+    def job_type(self) -> str: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def phase(self) -> Optional[str]: ...
+    @property
+    def total_count(self) -> int: ...
+    @property
+    def processed_count(self) -> int: ...
+    @property
+    def succeeded_count(self) -> int: ...
+    @property
+    def skipped_count(self) -> int: ...
+    @property
+    def failed_count(self) -> int: ...
+    @property
+    def percent(self) -> Optional[int]: ...
+    @property
+    def eta_human(self) -> Optional[str]: ...
+    @property
+    def error_detail(self) -> Optional[str]: ...
+    @property
+    def can_cancel(self) -> bool: ...
+    def is_terminal(self) -> bool: ...
+    def is_wait_complete(self) -> bool: ...
+    def as_dict(self) -> dict[str, Any]: ...
+
+class VersionBuildJob:
+    """Status snapshot for a dataset version archive build job."""
+
+    @property
+    def job_id(self) -> str: ...
+    @property
+    def dataset_id(self) -> int: ...
+    @property
+    def version_id(self) -> int: ...
+    @property
+    def version_no(self) -> str: ...
+    @property
+    def job_type(self) -> str: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def phase(self) -> Optional[str]: ...
+    @property
+    def total_entities(self) -> int: ...
+    @property
+    def processed_entities(self) -> int: ...
+    @property
+    def shards_total(self) -> int: ...
+    @property
+    def shards_uploaded(self) -> int: ...
+    @property
+    def percent(self) -> Optional[int]: ...
+    @property
+    def eta_human(self) -> Optional[str]: ...
+    @property
+    def error_json(self) -> Optional[str]: ...
+    def is_terminal(self) -> bool: ...
+    def is_wait_complete(self) -> bool: ...
+    def is_ready(self) -> bool:
+        """True when the build finished successfully (archive ready)."""
+        ...
     def as_dict(self) -> dict[str, Any]: ...
 
 class Dataset:
@@ -365,16 +438,24 @@ class Benchmarks:
         ...
 
     def dataset(self, dataset_path: Optional[str] = None) -> list[DatasetItem]:
-        """Download the benchmark dataset archive and return all samples.
+        """Download the benchmark evaluation set and return all samples.
 
-        The archive is fetched from
-        ``GET /model-micro-services/v2/benchmarks/datasets/download/{benchmark_id}``
-        and extracted to the local cache under
-        ``~/cache/kappa-framework/benchmarks/{benchmark_id}/``.
-        A second call with the same benchmark skips the download entirely.
+        Follows the same order as the web client: the dataset version package for the
+        benchmark's ``datasetId`` / ``datasetVersionNo``
+        (``GET /data-micro-services/v2/datasets/versions/{id}/{versionNo}/package``), then
+        the benchmark proxy (``GET .../benchmarks/datasets/{benchmark_id}/package``) when
+        only ``benchmark.read`` is held. Either path uses the legacy single zip when the
+        manifest reports one. Extracted to
+        ``~/cache/kappa-framework/benchmarks/{benchmark_id}/``, so a second call with the
+        same benchmark skips the download entirely.
+
+        Raises:
+            RuntimeError: The version archive is still building (``buildStatus`` is not
+                ``ready``).
+            PermissionError: A dataset download-approval request is still pending.
 
         Args:
-            dataset_path: Override the cache root directory.  The archive is
+            dataset_path: Override the cache root directory.  Contents are
                 extracted to ``{dataset_path}/{benchmark_id}/``.  Omit to use
                 the default cache location.
 
@@ -411,11 +492,42 @@ class Benchmarks:
         """
         ...
 
-    def submit_benchmark(self, strict: bool = True) -> dict[str, Any]:
+    @property
+    def saved_result(self) -> Optional[BenchmarkResult]:
+        """The result built by the last :meth:`save_benchmark` call."""
+        ...
+
+    def submit_benchmark(
+        self,
+        strict: bool = True,
+        model_version_id: Optional[int] = None,
+        complete_inference: bool = True,
+        create_version: bool = True,
+        upload_artifacts: bool = False,
+        artifact_paths: Optional[list[str]] = None,
+        on_progress: Optional[Any] = None,
+    ) -> dict[str, Any]:
         """Submit the saved benchmark result to the model service.
 
         Requires :meth:`save_benchmark` first. When *strict* is True (default),
         validates against the model inference schema before POST.
+
+        With *complete_inference* (default) the saved inference is then linked to the
+        benchmark, moving it from *Pending Inference* to *Inference Completed*. The model
+        version comes from *model_version_id*, else the benchmark's ``mlmodelVersionId``
+        when one was assigned, else the version holding the inference just saved — which
+        *create_version* (default True) creates when it does not exist yet. Pass
+        ``create_version=False`` to fail instead of creating a version implicitly.
+
+        With *upload_artifacts* the model files are uploaded to the new inference —
+        *artifact_paths* (files and/or directories) when given, otherwise the ``model_path``
+        from :meth:`save_benchmark`. Files past the server's sync cap take a resumable
+        multipart session, so multi-GB weights work here. *on_progress* receives
+        ``(file_name, bytes_sent, total_bytes, percent)``.
+
+        Example:
+            >>> bm.save_benchmark(predictions, metrics, model_path="./model")
+            >>> bm.submit_benchmark(upload_artifacts=True)
         """
         ...
 
@@ -755,11 +867,36 @@ class KappaApkClient:
         version_no: Optional[str] = None,
         dataset_path: Optional[str] = None,
     ) -> DatasetDownloadDetails:
-        """Download and extract a dataset version archive to the local cache.
+        """Download and extract the legacy single-zip version archive to the local cache.
 
         The archive is cached at ``~/cache/kappa-framework/datasets/{name}_{ver}/``.
         A second call with the same parameters skips the download.
+
+        On Kappa ≥ 2.11 this zip only exists for single-shard versions; use
+        :meth:`download_dataset_version_package` for large versions.
         """
+        ...
+
+    def download_dataset_version_package(
+        self,
+        dataset_id: Optional[int] = None,
+        dataset_name: Optional[str] = None,
+        version_id: Optional[int] = None,
+        version_no: Optional[str] = None,
+        dataset_path: Optional[str] = None,
+    ) -> DatasetDownloadDetails:
+        """Download a sharded version package (Kappa ≥ 2.11); falls back to legacy zip.
+
+        Raises if the archive build is not yet ``ready``.
+        """
+        ...
+
+    def get_dataset_version_package_manifest(
+        self,
+        dataset_id: int,
+        version_no: str,
+    ) -> dict[str, Any]:
+        """Fetch ``manifest.json`` for a sharded version package."""
         ...
 
     def load_kappa_dataset(
@@ -872,11 +1009,21 @@ class KappaApkClient:
         size: Optional[int] = None,
         order_by: Optional[str] = None,
         order_keyword: Optional[str] = None,
+        query_all: Optional[bool] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        selected_version_id: Optional[int] = None,
+        selected_version_no: Optional[str] = None,
     ) -> dict[str, Any]:
         """Filter datasets with rich query params.
 
+        Pages are 1-based; the response is ``{items, total, page, size, pages}``.
         *dataset_tags* is a comma-separated string, e.g. ``"vision,classification"``.
         *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
+        *query_all* ``False`` limits results to datasets you own, are assigned to, or that are
+        shared with you; the default (``True``) also lists the public catalogue.
+        *selected_version_id* / *selected_version_no* add ``selectedVersionNo`` and
+        ``selectedVersionBuildStatus`` to every item.
         """
         ...
 
@@ -962,8 +1109,19 @@ class KappaApkClient:
         size: Optional[int] = None,
         order_by: Optional[str] = None,
         order: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        location_id: Optional[int] = None,
+        assignment_filter: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Paginated entity search with optional name / status / version filters."""
+        """Paginated entity search with optional name / status / version filters.
+
+        Pages are 1-based (default ``page=1``). Sort direction is *order* here, while
+        dataset filters use *order_keyword*. *assignment_filter* is ``"assigned"`` or
+        ``"not_assigned"`` (default). There is no server-side split filter — read
+        ``dsEntityInfo.split`` from each item.
+        """
         ...
 
     def delete_dataset_entities(
@@ -972,7 +1130,7 @@ class KappaApkClient:
         remark: str,
         version_id: Optional[int] = None,
     ) -> dict[str, Any]:
-        """Bulk soft-delete entities by their string IDs."""
+        """Bulk soft-delete entities (Kappa ≥ 2.11 returns ``jobId`` — poll mutation job)."""
         ...
 
     def recover_dataset_entities(
@@ -980,7 +1138,7 @@ class KappaApkClient:
         dataset_entity_ids: list[str],
         version_id: Optional[int] = None,
     ) -> dict[str, Any]:
-        """Recover soft-deleted entities (``POST .../datasetEntities/recover``)."""
+        """Recover soft-deleted entities (Kappa ≥ 2.11 returns ``jobId``)."""
         ...
 
     def upload_dataset_entity_files(
@@ -998,7 +1156,7 @@ class KappaApkClient:
         self,
         entity_file_ids: list[str],
     ) -> dict[str, Any]:
-        """Soft-delete entity files by file ID list."""
+        """Soft-delete entity files (Kappa ≥ 2.11 returns ``jobId``)."""
         ...
 
     def bulk_upload_dataset_entities(
@@ -1052,10 +1210,48 @@ class KappaApkClient:
     def mark_dataset_entities_labeled(
         self,
         dataset_id: int,
-        dataset_entity_ids: list[str],
+        dataset_entity_ids: Optional[list[str]] = None,
         remark: Optional[str] = None,
+        all_eligible: Optional[bool] = None,
     ) -> dict[str, Any]:
-        """Mark default-algorithm entities as labeled."""
+        """Enqueue mark-labeled (pass IDs or ``all_eligible=True``). Returns ``jobId``.
+
+        Inline ID lists are capped server-side (default 5000, HTTP 413); use
+        ``all_eligible=True`` for whole-dataset runs.
+        """
+        ...
+
+    def get_mark_labeled_stats(self, dataset_id: int) -> dict[str, Any]: ...
+    def get_self_verify_stats(self, dataset_id: int) -> dict[str, Any]: ...
+    def bulk_self_verify_dataset_entities(
+        self,
+        dataset_id: int,
+        status: int,
+        comment: Optional[str] = None,
+        job_corrections_by_entity: Optional[Any] = None,
+    ) -> dict[str, Any]:
+        """Enqueue self-verify batch (``status`` 1=Pass, 3=Needs Modification)."""
+        ...
+
+    def auto_verify_dataset_entities(self, dataset_id: int) -> dict[str, Any]:
+        """Enqueue auto-verify for the dataset."""
+        ...
+
+    def get_bulk_mutation_job(self, dataset_id: int, job_id: str) -> BulkMutationJob: ...
+    def list_bulk_mutation_jobs(self, dataset_id: int) -> dict[str, Any]: ...
+    def cancel_bulk_mutation_job(self, dataset_id: int, job_id: str) -> dict[str, Any]: ...
+    def wait_for_bulk_mutation_job(
+        self,
+        dataset_id: int,
+        job_id: str,
+        poll_interval_secs: Optional[float] = None,
+        timeout_secs: Optional[float] = None,
+        on_progress: Optional[Any] = None,
+    ) -> BulkMutationJob:
+        """Poll until mutation job is terminal (default timeout 1 hour).
+
+        *on_progress(job)* is called each poll.
+        """
         ...
 
     def download_dataset_entity_file(
@@ -1104,7 +1300,7 @@ class KappaApkClient:
         dataset_id: int,
         version: Any,
     ) -> dict[str, Any]:
-        """Create a new dataset version (accepts :class:`NewDatasetVersion` or a plain dict)."""
+        """Create a new dataset version; Kappa ≥ 2.11 returns ``jobId`` / ``buildStatus``."""
         ...
 
     def list_dataset_versions(
@@ -1132,7 +1328,7 @@ class KappaApkClient:
         version_no: str,
         publish_type: int,
     ) -> dict[str, Any]:
-        """Publish a dataset version.
+        """Publish a version (requires archive ``buildStatus=ready`` on Kappa ≥ 2.11).
 
         *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
         """
@@ -1143,7 +1339,19 @@ class KappaApkClient:
         ...
 
     def refresh_dataset_version(self, dataset_id: int, version_no: str) -> dict[str, Any]:
-        """Rebuild the version archive after entity changes."""
+        """Patch-release / refresh (enqueues build job on Kappa ≥ 2.11)."""
+        ...
+
+    def get_version_build_job(self, job_id: str) -> VersionBuildJob: ...
+    def retry_version_build_job(self, job_id: str) -> dict[str, Any]: ...
+    def wait_for_version_build_job(
+        self,
+        job_id: str,
+        poll_interval_secs: Optional[float] = None,
+        timeout_secs: Optional[float] = None,
+        on_progress: Optional[Any] = None,
+    ) -> VersionBuildJob:
+        """Poll until version build is terminal (default timeout 1 hour)."""
         ...
 
     # --- benchmarks ---
@@ -1184,21 +1392,189 @@ class KappaApkClient:
         file_path: str,
         file_category: Optional[int] = None,
         replace: bool = False,
+        use_session: Optional[bool] = None,
     ) -> dict[str, Any]:
-        """Upload inference artifact (*file_category* 1–5; default 2 Inference)."""
+        """Upload inference artifact (*file_category* 1–5; default 2 Inference).
+
+        Large files use a multipart upload session automatically: pass ``use_session=True``
+        to force it, ``False`` to insist on the plain upload (which the server rejects with
+        ``413 USE_KAPPA_APK`` past its sync cap). Sessions upsert by file name, so *replace*
+        has no effect on them.
+        """
+        ...
+    def write_model_inference(
+        self,
+        model_id: str,
+        predictions: Optional[Any] = None,
+        metrics: Optional[Any] = None,
+        inference_result: Optional[Any] = None,
+        artifacts: Optional[Any] = None,
+        benchmark_id: Optional[str] = None,
+        file_category: Optional[int] = None,
+        validate: bool = True,
+        use_session: Optional[bool] = None,
+        skip_existing: bool = True,
+        on_progress: Optional[Any] = None,
+    ) -> dict[str, Any]:
+        """Write an inference result and its artifacts in one call, per the model's schema.
+
+        Reads the model's effective inference schema, shapes *predictions* / *metrics* into
+        the ``results.predictions[]`` document it requires, validates the payload
+        server-side, creates the inference and uploads *artifacts* — a path, a list of
+        paths, or directories of weight shards. Files past the sync cap take a resumable
+        multipart session; artifacts already attached with the same name and size are
+        skipped when *skip_existing*.
+
+        Pass *inference_result* to send a document you built yourself; *predictions* and
+        *metrics* are then ignored.
+
+        Prediction dicts accept ``entity_id`` or ``entityId``, and a bare label string for
+        ``predicted`` is wrapped into the key the schema requires (e.g. ``class_name``).
+
+        Args:
+            artifacts: File path, directory, or list of either.
+            benchmark_id: Written into the result document when the run is a benchmark.
+            file_category: 1 Training, 2 Inference, 3 Model (default here), 4 Data, 5 Other.
+            validate: Validate against the schema before creating the inference.
+            use_session: Force (``True``) or forbid (``False``) upload sessions; ``None``
+                picks per file size.
+            on_progress: Called as ``(file_name, bytes_sent, total_bytes, percent)``.
+
+        Returns:
+            ``{"modelId", "inferenceId", "schema", "validation", "artifacts",
+            "inferenceResult"}``.
+
+        Raises:
+            ValueError: The result does not match the model's inference schema.
+
+        Example:
+            >>> written = client.write_model_inference(
+            ...     model_id,
+            ...     predictions=[{"entityId": "e1", "predicted": {"class_name": "pizza"}}],
+            ...     metrics={"accuracy": 0.93},
+            ...     artifacts=["./checkpoints", "./config.json"],
+            ... )
+            >>> written["inferenceId"]
+            12
+        """
+        ...
+    def upload_model_artifacts(
+        self,
+        model_id: str,
+        inference_id: int,
+        paths: Any,
+        file_category: Optional[int] = None,
+        use_session: Optional[bool] = None,
+        skip_existing: bool = True,
+        checksum: Optional[bool] = None,
+        on_progress: Optional[Any] = None,
+    ) -> list[dict[str, Any]]:
+        """Upload a set of artifacts (files, directories, weight shards) to one inference.
+
+        Files go up one at a time — the server admits only a couple of concurrent large
+        uploads per model — and each picks its own transport: the plain upload for sidecars,
+        a resumable multipart session past the sync cap. With *skip_existing* the package
+        manifest is read first, so a re-run after a failure only sends what is missing.
+
+        *on_progress* receives ``(file_name, bytes_sent, total_bytes, percent)``. Each
+        returned entry has ``fileName``, ``path``, ``bytes``, ``transport``
+        (``"sync"`` / ``"session"`` / ``"skipped"``), ``fileId`` and the raw ``response``.
+        """
+        ...
+    def upload_model_artifact_session(
+        self,
+        model_id: str,
+        inference_id: int,
+        file_path: str,
+        file_category: Optional[int] = None,
+        on_progress: Optional[Any] = None,
+        checksum: bool = False,
+        resume: bool = True,
+        max_retries: int = 5,
+        wait_for_slot: bool = True,
+    ) -> dict[str, Any]:
+        """Upload a large artifact through a multipart session.
+
+        *on_progress* receives ``(bytes_sent, total_bytes, percent)`` after each part.
+        *file_category* defaults to 3 (Model) on this route, unlike the plain upload's 2.
+
+        Each part is retried up to *max_retries* times against a freshly presigned URL, and
+        the upload id plus part ETags are checkpointed under the user cache dir, so an
+        interrupted run resumes where it stopped (*resume=False* always starts over). With
+        *wait_for_slot* a ``429 MODEL_ARTIFACT_UPLOAD_ADMISSION_LIMIT`` is waited out instead
+        of raised. *checksum* computes the file's SHA-256 and records it on the artifact.
+        """
+        ...
+    def get_model_artifact_upload_session(
+        self,
+        model_id: str,
+        inference_id: int,
+        upload_id: str,
+    ) -> dict[str, Any]: ...
+    def abort_model_artifact_upload_session(
+        self,
+        model_id: str,
+        inference_id: int,
+        upload_id: str,
+    ) -> dict[str, Any]:
+        """Abort a pending upload session (frees an admission slot)."""
+        ...
+    def get_model_inference_artifacts_package(
+        self,
+        model_id: str,
+        inference_id: int,
+    ) -> dict[str, Any]:
+        """Artifact manifest: ``files[]`` with sizes, categories and optional download URLs."""
+        ...
+    def get_model_version_artifacts_package(
+        self,
+        model_id: str,
+        version_id: int,
+    ) -> dict[str, Any]: ...
+    def download_model_inference_artifact_file(
+        self,
+        model_id: str,
+        inference_id: int,
+        file_id: str,
+        dest_path: str,
+        redirect: bool = False,
+    ) -> str:
+        """Download one artifact by file ID.
+
+        *redirect* follows a presigned object-storage URL instead of streaming through the
+        gateway; it only works where that storage is reachable.
+        """
+        ...
+    def download_model_inference_artifacts_package(
+        self,
+        model_id: str,
+        inference_id: int,
+        dest_dir: str,
+        redirect: bool = False,
+    ) -> list[str]:
+        """Download every artifact of an inference, file by file.
+
+        Prefer this for big packages: the single zip is refused with
+        ``409 PACKAGE_TOO_LARGE_FOR_ZIP`` past the server's zip ceiling. Falls back to the
+        zip on backends without package routes. Returns the paths written.
+        """
         ...
     def download_model_inference_artifacts(
         self,
         model_id: str,
         inference_id: int,
         dest_path: str,
-    ) -> str: ...
+    ) -> str:
+        """Download all inference artifacts as one zip (small packages only)."""
+        ...
     def download_model_version_artifacts(
         self,
         model_id: str,
         version_id: int,
         dest_path: str,
-    ) -> str: ...
+    ) -> str:
+        """Download a model version's artifacts as one zip (small packages only)."""
+        ...
     def get_model_version_inference(self, model_id: str, version_id: int) -> dict[str, Any]: ...
 
     def get_model_inference_schema(self, model_id: str) -> dict[str, Any]: ...
@@ -1221,11 +1597,106 @@ class KappaApkClient:
     def delete_model_pipeline(self, model_id: str, version_id: int) -> dict[str, Any]: ...
     def validate_model_pipeline(self, model_id: str, version_id: int) -> dict[str, Any]: ...
 
-    def list_benchmarks(self) -> dict[str, Any]: ...
+    def list_benchmarks(self) -> dict[str, Any]:
+        """First page of benchmarks, unfiltered. See :meth:`filter_benchmarks`."""
+        ...
+    def filter_benchmarks(
+        self,
+        benchmark_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        model_type: Optional[int] = None,
+        dataset_id: Optional[int] = None,
+        dataset_version_id: Optional[int] = None,
+        model_version_id: Optional[int] = None,
+        benchmark_status: Optional[int] = None,
+        user_id: Optional[int] = None,
+        report_id: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        order_by: Optional[str] = None,
+        order: Optional[str] = None,
+        page: Optional[int] = None,
+        size: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Paginated benchmark search. Sort direction is *order* (``"ASC"`` / ``"DESC"``)."""
+        ...
+    def get_benchmark(self, benchmark_id: str) -> dict[str, Any]:
+        """Benchmark detail dict (``datasetId``, ``datasetVersionNo``, ``benchmarkStatus``, …)."""
+        ...
     def create_benchmark(self, benchmark: Any) -> dict[str, Any]: ...
     def update_benchmark(self, benchmark_id: str, update: Any) -> dict[str, Any]: ...
     def delete_benchmark(self, benchmark_id: str) -> dict[str, Any]: ...
-    def complete_benchmark_inference(self, benchmark_id: str, model_version_id: int) -> dict[str, Any]: ...
+    def complete_benchmark_inference(self, benchmark_id: str, model_version_id: int) -> dict[str, Any]:
+        """Attach a model version's inference results to the benchmark (status 4 → 5)."""
+        ...
+    def get_benchmark_flow_schema(self) -> dict[str, Any]: ...
+
+    def list_benchmark_remarks(self, benchmark_id: str) -> list[dict[str, Any]]: ...
+    def add_benchmark_remark(self, benchmark_id: str, message: str) -> dict[str, Any]:
+        """Post a remark (1–4000 characters). Rejected once the benchmark is closed."""
+        ...
+
+    def respond_to_benchmark_expert_request(self, benchmark_id: str, accept: bool) -> dict[str, Any]:
+        """Accept or reject an expert request as the assigned expert."""
+        ...
+    def assign_benchmark_expert(self, benchmark_id: str, expert_id: int) -> dict[str, Any]:
+        """Assign an expert (requires ``benchmark.manage``)."""
+        ...
+    def propose_benchmark_dataset(
+        self,
+        benchmark_id: str,
+        dataset_id: int,
+        dataset_version_id: int,
+    ) -> dict[str, Any]: ...
+    def confirm_benchmark_dataset(self, benchmark_id: str) -> dict[str, Any]: ...
+    def reject_benchmark_dataset(self, benchmark_id: str) -> dict[str, Any]: ...
+    def get_benchmark_dataset_attachments(
+        self,
+        dataset_id: int,
+        dataset_version_id: int,
+    ) -> dict[str, Any]: ...
+
+    def get_benchmark_review(self, benchmark_id: str, expert_id: int) -> dict[str, Any]:
+        """Inference results plus saved expert reviews. First call moves status 5 → 6."""
+        ...
+    def save_benchmark_review(
+        self,
+        benchmark_id: str,
+        expert_id: int,
+        review: Any,
+    ) -> dict[str, Any]:
+        """Save review progress (``{"reviews": {entityUuid: {...}}, "finalScore": ...}``)."""
+        ...
+    def finalize_benchmark_review(self, benchmark_id: str, expert_id: int) -> dict[str, Any]:
+        """Finalize the review and schedule report generation. Save the review first."""
+        ...
+    def regenerate_benchmark_report(self, benchmark_id: str) -> dict[str, Any]: ...
+    def get_benchmark_report(self, benchmark_id: str) -> dict[str, Any]: ...
+    def download_benchmark_report(
+        self,
+        benchmark_id: str,
+        dest_path: str,
+        lang: Optional[str] = None,
+    ) -> str:
+        """Write the report PDF. *lang* is ``"en"`` (default) or ``"ru"``."""
+        ...
+
+    def get_benchmark_dataset_package_manifest(self, benchmark_id: str) -> dict[str, Any]: ...
+    def download_benchmark_dataset_package(
+        self,
+        benchmark_id: str,
+        dataset_id: Optional[int] = None,
+        version_no: Optional[str] = None,
+        dataset_path: Optional[str] = None,
+    ) -> str:
+        """Download the benchmark evaluation set the way the web client does.
+
+        Tries the dataset version package for the benchmark's ``datasetId`` /
+        ``datasetVersionNo`` first, then the benchmark proxy when only ``benchmark.read``
+        is held; each path uses the legacy single zip when the manifest says so. Both IDs
+        are read from the benchmark detail when omitted. Returns the extraction directory.
+        """
+        ...
 
     # --- raw HTTP ---
 

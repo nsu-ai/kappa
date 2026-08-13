@@ -11,11 +11,14 @@ use std::sync::Arc;
 use crate::traits::ApiClient;
 use crate::datasets::datasets::{Datasets, KappaDataset};
 use crate::benchmarks::benchmarks::Benchmarks;
+use crate::benchmarks::benchmarks_api::BenchmarksApi;
+use crate::model_artifacts::ModelArtifactsApi;
 use crate::models::users_model::User;
 use crate::models::login_models::LoginRequest;
 use crate::models::datasets_model::{
-    BulkUploadJob, DatasetDownloadDetails, DatasetLabel, DatasetVersionDetails, NewDataset,
-    NewDatasetEntity, NewDatasetVersion, UpdateDatasetEntity, UpdateDatasetRequest,
+    BulkMutationJob, BulkUploadJob, DatasetDownloadDetails, DatasetLabel, DatasetVersionDetails,
+    NewDataset, NewDatasetEntity, NewDatasetVersion, UpdateDatasetEntity, UpdateDatasetRequest,
+    VersionBuildJob,
 };
 use crate::utils::python_json::{json_value_to_pyobject, rust_value_to_pyobject};
 use crate::users::users::Users;
@@ -570,6 +573,36 @@ fn http_error_to_pyerr(status: reqwest::StatusCode, text: String) -> PyErr {
 fn py_json_dumps(v: &Bound<'_, PyAny>) -> PyResult<String> {
     let py = v.py();
     py.import("json")?.getattr("dumps")?.call1((v,))?.extract()
+}
+
+/// Convert an optional Python object into JSON, treating `None` as absent.
+fn py_json_value(v: Option<&Bound<'_, PyAny>>) -> PyResult<Option<serde_json::Value>> {
+    let Some(value) = v else { return Ok(None) };
+    if value.is_none() {
+        return Ok(None);
+    }
+    let json: String = py_json_dumps(value)?;
+    serde_json::from_str(&json)
+        .map(Some)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid JSON: {}", e)))
+}
+
+/// Accept a single path or a sequence of paths.
+fn py_path_list(v: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
+    let Some(value) = v else {
+        return Ok(Vec::new());
+    };
+    if value.is_none() {
+        return Ok(Vec::new());
+    }
+    if let Ok(single) = value.extract::<String>() {
+        return Ok(vec![single]);
+    }
+    value.extract::<Vec<String>>().map_err(|_| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "artifact paths must be a string or a list of strings",
+        )
+    })
 }
 
 fn encode_new_dataset_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
@@ -1241,10 +1274,15 @@ impl KappaApkClient {
 
     /// Filter / search datasets with rich query params.
     ///
-    /// All parameters are optional; omit any you don't need.
+    /// All parameters are optional; omit any you don't need. Pages are **1-based**;
+    /// the response is `{items, total, page, size, pages}`.
     /// `dataset_tags` is a comma-separated tag string (e.g. `"vision,classification"`).
     /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
-    #[pyo3(signature = (search=None, dataset_id=None, dataset_name=None, dataset_type=None, dataset_tags=None, dataset_status=None, publish_type=None, page=None, size=None, order_by=None, order_keyword=None))]
+    /// `query_all=False` limits results to datasets you own, are assigned to, or that are
+    /// shared with you; the backend default (`True`) also lists the public catalogue.
+    /// `selected_version_id` / `selected_version_no` add `selectedVersionNo` and
+    /// `selectedVersionBuildStatus` to each item — handy to check `ready` before download.
+    #[pyo3(signature = (search=None, dataset_id=None, dataset_name=None, dataset_type=None, dataset_tags=None, dataset_status=None, publish_type=None, page=None, size=None, order_by=None, order_keyword=None, query_all=None, start_date=None, end_date=None, selected_version_id=None, selected_version_no=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn filter_datasets(
         &self,
@@ -1259,11 +1297,17 @@ impl KappaApkClient {
         size: Option<i32>,
         order_by: Option<String>,
         order_keyword: Option<String>,
+        query_all: Option<bool>,
+        start_date: Option<String>,
+        end_date: Option<String>,
+        selected_version_id: Option<i32>,
+        selected_version_no: Option<String>,
     ) -> PyResult<PyObject> {
         Datasets::filter_datasets(
             self, search, dataset_id, dataset_name, dataset_type,
             dataset_tags, dataset_status, publish_type, page, size,
-            order_by, order_keyword,
+            order_by, order_keyword, query_all, start_date, end_date,
+            selected_version_id, selected_version_no,
         )
     }
 
@@ -1365,8 +1409,11 @@ impl KappaApkClient {
 
     /// Paginated entity search with optional name / status / version filters.
     ///
-    /// Entity filter pagination is **0-based** (default `page=0`). Dataset list APIs use 1-based pages.
-    #[pyo3(signature = (dataset_id, entity_name=None, entity_status=None, version_id=None, page=None, size=None, order_by=None, order=None))]
+    /// Pages are **1-based** (default `page=1`), matching the backend's
+    /// `offset = (page - 1) * size`. Sort direction is `order` here (dataset filters use
+    /// `order_keyword`). `assignment_filter` is `"assigned"` or `"not_assigned"` (default).
+    /// There is no server-side `split` filter — read `dsEntityInfo.split` from each item.
+    #[pyo3(signature = (dataset_id, entity_name=None, entity_status=None, version_id=None, page=None, size=None, order_by=None, order=None, entity_id=None, location_id=None, assignment_filter=None, start_date=None, end_date=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn filter_dataset_entities(
         &self,
@@ -1378,14 +1425,20 @@ impl KappaApkClient {
         size: Option<i32>,
         order_by: Option<String>,
         order: Option<String>,
+        entity_id: Option<String>,
+        location_id: Option<i32>,
+        assignment_filter: Option<String>,
+        start_date: Option<String>,
+        end_date: Option<String>,
     ) -> PyResult<PyObject> {
         Datasets::filter_dataset_entities(
             self, dataset_id, entity_name, entity_status,
             version_id, page, size, order_by, order,
+            entity_id, location_id, assignment_filter, start_date, end_date,
         )
     }
 
-    /// Bulk soft-delete entities by their string IDs.
+    /// Bulk soft-delete entities by their string IDs (async job on Kappa ≥ 2.11 — returns `jobId`).
     #[pyo3(signature = (dataset_entity_ids, remark, version_id=None))]
     pub fn delete_dataset_entities(
         &self,
@@ -1396,7 +1449,7 @@ impl KappaApkClient {
         Datasets::delete_dataset_entities(self, dataset_entity_ids, remark, version_id)
     }
 
-    /// Recover soft-deleted entities (`POST .../datasetEntities/recover`).
+    /// Recover soft-deleted entities (async job on Kappa ≥ 2.11 — returns `jobId`).
     #[pyo3(signature = (dataset_entity_ids, version_id=None))]
     pub fn recover_dataset_entities(
         &self,
@@ -1428,7 +1481,7 @@ impl KappaApkClient {
         )
     }
 
-    /// Soft-delete entity files by file ID list.
+    /// Soft-delete entity files by file ID list (async job on Kappa ≥ 2.11 — returns `jobId`).
     pub fn delete_dataset_entity_files(
         &self,
         entity_file_ids: Vec<String>,
@@ -1547,9 +1600,112 @@ impl KappaApkClient {
         )
     }
 
+    // --- bulk mutations (Kappa ≥ 2.11) ---
+
+    /// Enqueue mark-labeled job (`202` + `jobId`). Use `all_eligible=True` or pass entity IDs.
+    #[pyo3(signature = (dataset_id, dataset_entity_ids=None, remark=None, all_eligible=None))]
+    pub fn mark_dataset_entities_labeled(
+        &self,
+        dataset_id: i32,
+        dataset_entity_ids: Option<Vec<String>>,
+        remark: Option<String>,
+        all_eligible: Option<bool>,
+    ) -> PyResult<PyObject> {
+        Datasets::mark_dataset_entities_labeled(
+            self,
+            dataset_id,
+            dataset_entity_ids,
+            remark,
+            all_eligible,
+        )
+    }
+
+    /// Eligible entity count for mark-labeled (`GET …/mark-labeled-stats/{id}`).
+    pub fn get_mark_labeled_stats(&self, dataset_id: i32) -> PyResult<PyObject> {
+        Datasets::get_mark_labeled_stats(self, dataset_id)
+    }
+
+    /// Self-verify eligibility counters (`GET …/self-verify-stats/{id}`).
+    pub fn get_self_verify_stats(&self, dataset_id: i32) -> PyResult<PyObject> {
+        Datasets::get_self_verify_stats(self, dataset_id)
+    }
+
+    /// Enqueue bulk self-verify (`status` 1=Pass, 3=Needs Modification).
+    #[pyo3(signature = (dataset_id, status, comment=None, job_corrections_by_entity=None))]
+    pub fn bulk_self_verify_dataset_entities(
+        &self,
+        dataset_id: i32,
+        status: i32,
+        comment: Option<String>,
+        job_corrections_by_entity: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyObject> {
+        let corrections = match job_corrections_by_entity {
+            Some(v) => Some(py_json_dumps(v)?),
+            None => None,
+        };
+        Datasets::bulk_self_verify_dataset_entities(
+            self,
+            dataset_id,
+            status,
+            comment,
+            corrections,
+        )
+    }
+
+    /// Enqueue auto-verify for the dataset (`dataset.manage`).
+    pub fn auto_verify_dataset_entities(&self, dataset_id: i32) -> PyResult<PyObject> {
+        Datasets::auto_verify_dataset_entities(self, dataset_id)
+    }
+
+    /// Poll a bulk-mutation job (`BulkMutationJob`).
+    pub fn get_bulk_mutation_job(
+        &self,
+        dataset_id: i32,
+        job_id: String,
+    ) -> PyResult<Py<BulkMutationJob>> {
+        Datasets::get_bulk_mutation_job(self, dataset_id, &job_id)
+    }
+
+    /// List recent bulk-mutation jobs for a dataset.
+    pub fn list_bulk_mutation_jobs(&self, dataset_id: i32) -> PyResult<PyObject> {
+        Datasets::list_bulk_mutation_jobs(self, dataset_id)
+    }
+
+    /// Cancel a queued/running bulk-mutation job.
+    pub fn cancel_bulk_mutation_job(
+        &self,
+        dataset_id: i32,
+        job_id: String,
+    ) -> PyResult<PyObject> {
+        Datasets::cancel_bulk_mutation_job(self, dataset_id, &job_id)
+    }
+
+    /// Poll until a bulk-mutation job is terminal (default timeout 1 hour).
+    #[pyo3(signature = (dataset_id, job_id, poll_interval_secs=None, timeout_secs=None, on_progress=None))]
+    pub fn wait_for_bulk_mutation_job(
+        &self,
+        dataset_id: i32,
+        job_id: String,
+        poll_interval_secs: Option<f64>,
+        timeout_secs: Option<f64>,
+        on_progress: Option<PyObject>,
+    ) -> PyResult<Py<BulkMutationJob>> {
+        Datasets::wait_for_bulk_mutation_job(
+            self,
+            dataset_id,
+            &job_id,
+            poll_interval_secs,
+            timeout_secs,
+            on_progress,
+        )
+    }
+
     // --- dataset version management ---
 
     /// Create a new dataset version (accepts `NewDatasetVersion` or a plain dict).
+    ///
+    /// On Kappa ≥ 2.11 the response includes `jobId` / `buildStatus`; wait with
+    /// [`Self::wait_for_version_build_job`] before publish/download.
     pub fn create_dataset_version(
         &self,
         dataset_id: i32,
@@ -1581,6 +1737,7 @@ impl KappaApkClient {
     /// Publish a dataset version.
     ///
     /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
+    /// On Kappa ≥ 2.11 the archive must be `buildStatus=ready` or the API returns 409.
     pub fn publish_dataset_version(
         &self,
         dataset_id: i32,
@@ -1599,13 +1756,70 @@ impl KappaApkClient {
         Datasets::recover_dataset_version(self, dataset_id, &version_no)
     }
 
-    /// Rebuild the archive for a dataset version after entity changes.
+    /// Patch-release / refresh a version (enqueues archive build on Kappa ≥ 2.11).
     pub fn refresh_dataset_version(
         &self,
         dataset_id: i32,
         version_no: String,
     ) -> PyResult<PyObject> {
         Datasets::refresh_dataset_version(self, dataset_id, &version_no)
+    }
+
+    /// Poll a version archive build job.
+    pub fn get_version_build_job(&self, job_id: String) -> PyResult<Py<VersionBuildJob>> {
+        Datasets::get_version_build_job(self, &job_id)
+    }
+
+    /// Retry a failed/cancelled version build job.
+    pub fn retry_version_build_job(&self, job_id: String) -> PyResult<PyObject> {
+        Datasets::retry_version_build_job(self, &job_id)
+    }
+
+    /// Poll until a version build job is terminal (default timeout 1 hour).
+    #[pyo3(signature = (job_id, poll_interval_secs=None, timeout_secs=None, on_progress=None))]
+    pub fn wait_for_version_build_job(
+        &self,
+        job_id: String,
+        poll_interval_secs: Option<f64>,
+        timeout_secs: Option<f64>,
+        on_progress: Option<PyObject>,
+    ) -> PyResult<Py<VersionBuildJob>> {
+        Datasets::wait_for_version_build_job(
+            self,
+            &job_id,
+            poll_interval_secs,
+            timeout_secs,
+            on_progress,
+        )
+    }
+
+    /// Fetch the sharded version package manifest (`GET …/package`).
+    pub fn get_dataset_version_package_manifest(
+        &self,
+        dataset_id: i32,
+        version_no: String,
+    ) -> PyResult<PyObject> {
+        Datasets::get_dataset_version_package_manifest(self, dataset_id, &version_no)
+    }
+
+    /// Download a sharded version package into the local cache (falls back to legacy zip).
+    #[pyo3(signature = (dataset_id=None, dataset_name=None, version_id=None, version_no=None, dataset_path=None))]
+    pub fn download_dataset_version_package(
+        &self,
+        dataset_id: Option<i32>,
+        dataset_name: Option<String>,
+        version_id: Option<i32>,
+        version_no: Option<String>,
+        dataset_path: Option<String>,
+    ) -> PyResult<DatasetDownloadDetails> {
+        Datasets::download_dataset_version_package(
+            self,
+            dataset_id,
+            dataset_name,
+            version_id,
+            version_no,
+            dataset_path,
+        )
     }
 
     /// Retry a bulk upload job (`POST …/bulk/jobs/{id}/retry`).
@@ -1621,17 +1835,6 @@ impl KappaApkClient {
             None => "{}".to_string(),
         };
         Datasets::retry_bulk_upload_job(self, dataset_id, &job_id, body)
-    }
-
-    /// Mark default-algorithm entities as labeled without an external labeling job.
-    #[pyo3(signature = (dataset_id, dataset_entity_ids, remark=None))]
-    pub fn mark_dataset_entities_labeled(
-        &self,
-        dataset_id: i32,
-        dataset_entity_ids: Vec<String>,
-        remark: Option<String>,
-    ) -> PyResult<PyObject> {
-        Datasets::mark_dataset_entities_labeled(self, dataset_id, dataset_entity_ids, remark)
     }
 
     /// Download an entity file to `dest_path`.
@@ -1840,7 +2043,12 @@ impl KappaApkClient {
     ///
     /// `file_category`: 1 Training, 2 Inference (default), 3 Model, 4 Data, 5 Other.
     /// Set `replace=True` to PATCH an existing artifact.
-    #[pyo3(signature = (model_id, inference_id, file_path, file_category=None, replace=false))]
+    ///
+    /// Large files use a multipart upload session automatically: pass `use_session=True` to
+    /// force it, `False` to insist on the plain upload (which the server rejects with
+    /// `413 USE_KAPPA_APK` past its sync cap). Sessions upsert by file name, so `replace`
+    /// has no effect on them.
+    #[pyo3(signature = (model_id, inference_id, file_path, file_category=None, replace=false, use_session=None))]
     pub fn upload_model_inference_file(
         &self,
         model_id: String,
@@ -1848,6 +2056,7 @@ impl KappaApkClient {
         file_path: String,
         file_category: Option<i32>,
         replace: bool,
+        use_session: Option<bool>,
     ) -> PyResult<PyObject> {
         crate::models_api::ModelsApi::upload_model_inference_file(
             self,
@@ -1856,9 +2065,262 @@ impl KappaApkClient {
             &file_path,
             file_category,
             replace,
+            use_session,
         )
     }
 
+    /// Write an inference result and its artifacts in one call, following the model's schema.
+    ///
+    /// Reads the model's effective inference schema, shapes `predictions` / `metrics` into the
+    /// `results.predictions[]` document it requires, validates the payload server-side, creates
+    /// the inference and then uploads `artifacts` — files, directories of weight shards, or
+    /// both. Large files automatically take a resumable multipart upload session; artifacts
+    /// already attached with the same name and size are skipped.
+    ///
+    /// Pass `inference_result` to send a document you built yourself; `predictions` and
+    /// `metrics` are then ignored.
+    ///
+    /// Returns `{"modelId", "inferenceId", "schema", "validation", "artifacts",
+    /// "inferenceResult"}`.
+    ///
+    /// # Python Example
+    /// ```python
+    /// written = client.write_model_inference(
+    ///     model_id,
+    ///     predictions=[{"entityId": e.entity_id, "predicted": {"class_name": "pizza"}}],
+    ///     metrics={"accuracy": 0.93},
+    ///     artifacts=["./checkpoints"],
+    ///     on_progress=lambda name, sent, total, pct: print(name, pct),
+    /// )
+    /// print(written["inferenceId"])
+    /// ```
+    #[pyo3(signature = (
+        model_id,
+        predictions=None,
+        metrics=None,
+        inference_result=None,
+        artifacts=None,
+        benchmark_id=None,
+        file_category=None,
+        validate=true,
+        use_session=None,
+        skip_existing=true,
+        on_progress=None
+    ))]
+    pub fn write_model_inference(
+        &self,
+        py: Python<'_>,
+        model_id: String,
+        predictions: Option<&Bound<'_, PyAny>>,
+        metrics: Option<&Bound<'_, PyAny>>,
+        inference_result: Option<&Bound<'_, PyAny>>,
+        artifacts: Option<&Bound<'_, PyAny>>,
+        benchmark_id: Option<String>,
+        file_category: Option<i32>,
+        validate: bool,
+        use_session: Option<bool>,
+        skip_existing: bool,
+        on_progress: Option<PyObject>,
+    ) -> PyResult<PyObject> {
+        let request = crate::inference_writer::InferenceWrite {
+            predictions: py_json_value(predictions)?,
+            metrics: py_json_value(metrics)?,
+            inference_result: py_json_value(inference_result)?,
+            benchmark_id,
+            artifacts: py_path_list(artifacts)?,
+            file_category,
+            validate,
+            use_session,
+            skip_existing,
+            on_progress,
+        };
+        let written = crate::inference_writer::InferenceWriter::write(self, &model_id, request)?;
+        crate::utils::python_json::json_value_to_pyobject(py, &written)
+    }
+
+    /// Upload a set of artifacts (files, directories, weight shards) to one inference.
+    ///
+    /// Files go up one at a time, since the server admits only a couple of concurrent large
+    /// uploads per model, and each picks its own transport: the plain upload for sidecars, a
+    /// resumable multipart session past the sync cap. `skip_existing` compares against the
+    /// package manifest so a re-run after a failure only sends what is missing.
+    ///
+    /// `on_progress` receives `(file_name, bytes_sent, total_bytes, percent)`.
+    #[pyo3(signature = (
+        model_id,
+        inference_id,
+        paths,
+        file_category=None,
+        use_session=None,
+        skip_existing=true,
+        checksum=None,
+        on_progress=None
+    ))]
+    pub fn upload_model_artifacts(
+        &self,
+        py: Python<'_>,
+        model_id: String,
+        inference_id: i32,
+        paths: &Bound<'_, PyAny>,
+        file_category: Option<i32>,
+        use_session: Option<bool>,
+        skip_existing: bool,
+        checksum: Option<bool>,
+        on_progress: Option<PyObject>,
+    ) -> PyResult<PyObject> {
+        let uploaded = ModelArtifactsApi::upload_model_artifacts(
+            self,
+            &model_id,
+            inference_id,
+            py_path_list(Some(paths))?,
+            file_category,
+            use_session,
+            skip_existing,
+            checksum,
+            on_progress,
+        )?;
+        crate::utils::python_json::json_value_to_pyobject(py, &uploaded)
+    }
+
+    /// Upload a large artifact through an S3 multipart session with progress callbacks.
+    ///
+    /// `on_progress` receives `(bytes_sent, total_bytes, percent)` after each part. Parts are
+    /// retried against a freshly presigned URL, and the session is checkpointed so an
+    /// interrupted run resumes where it stopped (`resume=False` to always start over).
+    /// `file_category` defaults to 3 (Model) on this route, unlike the plain upload's 2.
+    #[pyo3(signature = (
+        model_id,
+        inference_id,
+        file_path,
+        file_category=None,
+        on_progress=None,
+        checksum=false,
+        resume=true,
+        max_retries=5,
+        wait_for_slot=true
+    ))]
+    pub fn upload_model_artifact_session(
+        &self,
+        model_id: String,
+        inference_id: i32,
+        file_path: String,
+        file_category: Option<i32>,
+        on_progress: Option<PyObject>,
+        checksum: bool,
+        resume: bool,
+        max_retries: u32,
+        wait_for_slot: bool,
+    ) -> PyResult<PyObject> {
+        ModelArtifactsApi::upload_model_artifact_session_with(
+            self,
+            &model_id,
+            inference_id,
+            &file_path,
+            crate::model_artifacts::SessionUploadOptions {
+                file_category,
+                on_progress,
+                checksum,
+                resume,
+                max_retries,
+                wait_for_slot,
+            },
+        )
+    }
+
+    /// Inspect a pending artifact upload session.
+    pub fn get_model_artifact_upload_session(
+        &self,
+        model_id: String,
+        inference_id: i32,
+        upload_id: String,
+    ) -> PyResult<PyObject> {
+        ModelArtifactsApi::get_model_artifact_upload_session(
+            self,
+            &model_id,
+            inference_id,
+            &upload_id,
+        )
+    }
+
+    /// Abort a pending artifact upload session (frees an admission slot).
+    pub fn abort_model_artifact_upload_session(
+        &self,
+        model_id: String,
+        inference_id: i32,
+        upload_id: String,
+    ) -> PyResult<PyObject> {
+        ModelArtifactsApi::abort_model_artifact_upload_session(
+            self,
+            &model_id,
+            inference_id,
+            &upload_id,
+        )
+    }
+
+    /// Artifact manifest for an inference (`files[]` with sizes, categories, download URLs).
+    pub fn get_model_inference_artifacts_package(
+        &self,
+        model_id: String,
+        inference_id: i32,
+    ) -> PyResult<PyObject> {
+        ModelArtifactsApi::get_model_inference_artifacts_package(self, &model_id, inference_id)
+    }
+
+    /// Artifact manifest for the inference linked to a model version.
+    pub fn get_model_version_artifacts_package(
+        &self,
+        model_id: String,
+        version_id: i32,
+    ) -> PyResult<PyObject> {
+        ModelArtifactsApi::get_model_version_artifacts_package(self, &model_id, version_id)
+    }
+
+    /// Download one artifact by file ID.
+    ///
+    /// `redirect=True` follows a presigned object-storage URL instead of streaming through
+    /// the gateway; it only works where that storage is reachable.
+    #[pyo3(signature = (model_id, inference_id, file_id, dest_path, redirect=false))]
+    pub fn download_model_inference_artifact_file(
+        &self,
+        model_id: String,
+        inference_id: i32,
+        file_id: String,
+        dest_path: String,
+        redirect: bool,
+    ) -> PyResult<String> {
+        ModelArtifactsApi::download_model_inference_artifact_file(
+            self,
+            &model_id,
+            inference_id,
+            &file_id,
+            &dest_path,
+            redirect,
+        )
+    }
+
+    /// Download every artifact of an inference into `dest_dir`, file by file.
+    ///
+    /// Prefer this over [`Self::download_model_inference_artifacts`] for big packages: the
+    /// single zip is refused with `409 PACKAGE_TOO_LARGE_FOR_ZIP` once it grows past the
+    /// server's zip ceiling. Falls back to the zip on backends without package routes.
+    #[pyo3(signature = (model_id, inference_id, dest_dir, redirect=false))]
+    pub fn download_model_inference_artifacts_package(
+        &self,
+        model_id: String,
+        inference_id: i32,
+        dest_dir: String,
+        redirect: bool,
+    ) -> PyResult<Vec<String>> {
+        ModelArtifactsApi::download_model_inference_artifacts_package(
+            self,
+            &model_id,
+            inference_id,
+            &dest_dir,
+            redirect,
+        )
+    }
+
+    /// Download all inference artifacts as one zip (small packages only).
     pub fn download_model_inference_artifacts(
         &self,
         model_id: String,
@@ -1873,6 +2335,7 @@ impl KappaApkClient {
         )
     }
 
+    /// Download a model version's artifacts as one zip (small packages only).
     pub fn download_model_version_artifacts(
         &self,
         model_id: String,
@@ -1992,12 +2455,64 @@ impl KappaApkClient {
         crate::models_api::ModelsApi::validate_model_pipeline(self, &model_id, version_id)
     }
 
+    // --- benchmark registry ---
+
+    /// List benchmarks (unfiltered first page). Use [`Self::filter_benchmarks`] for queries.
     pub fn list_benchmarks(&self) -> PyResult<PyObject> {
-        crate::models_api::ModelsApi::list_benchmarks(self)
+        BenchmarksApi::filter_benchmarks(
+            self, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            None, None,
+        )
+    }
+
+    /// Paginated benchmark search. Sort direction is `order` (`"ASC"` / `"DESC"`).
+    #[pyo3(signature = (benchmark_id=None, model_id=None, model_type=None, dataset_id=None, dataset_version_id=None, model_version_id=None, benchmark_status=None, user_id=None, report_id=None, start_date=None, end_date=None, order_by=None, order=None, page=None, size=None))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn filter_benchmarks(
+        &self,
+        benchmark_id: Option<String>,
+        model_id: Option<String>,
+        model_type: Option<i32>,
+        dataset_id: Option<i32>,
+        dataset_version_id: Option<i32>,
+        model_version_id: Option<i32>,
+        benchmark_status: Option<i32>,
+        user_id: Option<i32>,
+        report_id: Option<i32>,
+        start_date: Option<String>,
+        end_date: Option<String>,
+        order_by: Option<String>,
+        order: Option<String>,
+        page: Option<i32>,
+        size: Option<i32>,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::filter_benchmarks(
+            self,
+            benchmark_id,
+            model_id,
+            model_type,
+            dataset_id,
+            dataset_version_id,
+            model_version_id,
+            benchmark_status,
+            user_id,
+            report_id,
+            start_date,
+            end_date,
+            order_by,
+            order,
+            page,
+            size,
+        )
+    }
+
+    /// Full benchmark detail as a dict (`datasetId`, `datasetVersionNo`, `benchmarkStatus`, …).
+    pub fn get_benchmark(&self, benchmark_id: String) -> PyResult<PyObject> {
+        BenchmarksApi::get_benchmark(self, &benchmark_id)
     }
 
     pub fn create_benchmark(&self, benchmark: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        crate::models_api::ModelsApi::create_benchmark(self, py_json_dumps(benchmark)?)
+        BenchmarksApi::create_benchmark(self, py_json_dumps(benchmark)?)
     }
 
     pub fn update_benchmark(
@@ -2005,22 +2520,179 @@ impl KappaApkClient {
         benchmark_id: String,
         update: &Bound<'_, PyAny>,
     ) -> PyResult<PyObject> {
-        crate::models_api::ModelsApi::update_benchmark(self, &benchmark_id, py_json_dumps(update)?)
+        BenchmarksApi::update_benchmark(self, &benchmark_id, py_json_dumps(update)?)
     }
 
     pub fn delete_benchmark(&self, benchmark_id: String) -> PyResult<PyObject> {
-        crate::models_api::ModelsApi::delete_benchmark(self, &benchmark_id)
+        BenchmarksApi::delete_benchmark(self, &benchmark_id)
     }
 
+    /// Attach a model version's inference results to the benchmark (status 4 → 5).
     pub fn complete_benchmark_inference(
         &self,
         benchmark_id: String,
         model_version_id: i32,
     ) -> PyResult<PyObject> {
-        crate::models_api::ModelsApi::complete_benchmark_inference(
+        BenchmarksApi::complete_benchmark_inference(self, &benchmark_id, model_version_id)
+    }
+
+    /// Stage/step definitions behind the benchmark progress UI.
+    pub fn get_benchmark_flow_schema(&self) -> PyResult<PyObject> {
+        BenchmarksApi::get_benchmark_flow_schema(self)
+    }
+
+    // --- benchmark remarks ---
+
+    /// Read the benchmark remark thread (owner, expert and admin chat).
+    pub fn list_benchmark_remarks(&self, benchmark_id: String) -> PyResult<PyObject> {
+        BenchmarksApi::list_benchmark_remarks(self, &benchmark_id)
+    }
+
+    /// Post a remark (1–4000 characters). Rejected once the benchmark is closed.
+    pub fn add_benchmark_remark(
+        &self,
+        benchmark_id: String,
+        message: String,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::add_benchmark_remark(self, &benchmark_id, &message)
+    }
+
+    // --- benchmark expert & dataset selection ---
+
+    /// Accept or reject an expert request as the assigned expert.
+    pub fn respond_to_benchmark_expert_request(
+        &self,
+        benchmark_id: String,
+        accept: bool,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::respond_to_benchmark_expert_request(self, &benchmark_id, accept)
+    }
+
+    /// Assign an expert to a benchmark (requires `benchmark.manage`).
+    pub fn assign_benchmark_expert(
+        &self,
+        benchmark_id: String,
+        expert_id: i32,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::assign_benchmark_expert(self, &benchmark_id, expert_id)
+    }
+
+    /// Propose an evaluation dataset version for a benchmark (expert action).
+    pub fn propose_benchmark_dataset(
+        &self,
+        benchmark_id: String,
+        dataset_id: i32,
+        dataset_version_id: i32,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::propose_benchmark_dataset(self, &benchmark_id, dataset_id, dataset_version_id)
+    }
+
+    /// Confirm the proposed evaluation dataset. Requires the expert to have accepted first.
+    pub fn confirm_benchmark_dataset(&self, benchmark_id: String) -> PyResult<PyObject> {
+        BenchmarksApi::confirm_benchmark_dataset(self, &benchmark_id)
+    }
+
+    /// Reject the proposed evaluation dataset.
+    pub fn reject_benchmark_dataset(&self, benchmark_id: String) -> PyResult<PyObject> {
+        BenchmarksApi::reject_benchmark_dataset(self, &benchmark_id)
+    }
+
+    /// Which benchmarks are already attached to a dataset version.
+    pub fn get_benchmark_dataset_attachments(
+        &self,
+        dataset_id: i32,
+        dataset_version_id: i32,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::get_benchmark_dataset_attachments(self, dataset_id, dataset_version_id)
+    }
+
+    // --- benchmark review & report ---
+
+    /// Inference results plus saved expert reviews. The first call moves status 5 → 6.
+    pub fn get_benchmark_review(
+        &self,
+        benchmark_id: String,
+        expert_id: i32,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::get_benchmark_review(self, &benchmark_id, expert_id)
+    }
+
+    /// Save expert review progress (`{"reviews": {entityUuid: {...}}, "finalScore": ...}`).
+    pub fn save_benchmark_review(
+        &self,
+        benchmark_id: String,
+        expert_id: i32,
+        review: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::save_benchmark_review(
             self,
             &benchmark_id,
-            model_version_id,
+            expert_id,
+            py_json_dumps(review)?,
+        )
+    }
+
+    /// Finalize the review and schedule report generation. Save the review first.
+    pub fn finalize_benchmark_review(
+        &self,
+        benchmark_id: String,
+        expert_id: i32,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::finalize_benchmark_review(self, &benchmark_id, expert_id)
+    }
+
+    /// Schedule report regeneration (requires `benchmark.manage`).
+    pub fn regenerate_benchmark_report(&self, benchmark_id: String) -> PyResult<PyObject> {
+        BenchmarksApi::regenerate_benchmark_report(self, &benchmark_id)
+    }
+
+    /// Report metadata (`reportId`, `reportName`, `reportStatus`).
+    pub fn get_benchmark_report(&self, benchmark_id: String) -> PyResult<PyObject> {
+        BenchmarksApi::get_benchmark_report(self, &benchmark_id)
+    }
+
+    /// Write the benchmark report PDF to `dest_path`. `lang` is `"en"` (default) or `"ru"`.
+    #[pyo3(signature = (benchmark_id, dest_path, lang=None))]
+    pub fn download_benchmark_report(
+        &self,
+        benchmark_id: String,
+        dest_path: String,
+        lang: Option<String>,
+    ) -> PyResult<String> {
+        BenchmarksApi::download_benchmark_report(self, &benchmark_id, &dest_path, lang)
+    }
+
+    // --- benchmark evaluation dataset ---
+
+    /// Package manifest for the benchmark evaluation set (benchmark-proxied route).
+    pub fn get_benchmark_dataset_package_manifest(
+        &self,
+        benchmark_id: String,
+    ) -> PyResult<PyObject> {
+        BenchmarksApi::get_benchmark_dataset_package_manifest(self, &benchmark_id)
+    }
+
+    /// Download the benchmark evaluation set the same way the web client does.
+    ///
+    /// Tries the dataset-services package for the benchmark's `datasetId` /
+    /// `datasetVersionNo` first, then falls back to the benchmark proxy when you only hold
+    /// `benchmark.read`; either path uses the legacy single zip when the manifest says so.
+    /// Both IDs are read from the benchmark detail when omitted. Returns the extraction
+    /// directory, cached under `~/cache/kappa-framework/benchmarks/{benchmark_id}/`.
+    #[pyo3(signature = (benchmark_id, dataset_id=None, version_no=None, dataset_path=None))]
+    pub fn download_benchmark_dataset_package(
+        &self,
+        benchmark_id: String,
+        dataset_id: Option<i32>,
+        version_no: Option<String>,
+        dataset_path: Option<String>,
+    ) -> PyResult<String> {
+        BenchmarksApi::download_benchmark_dataset_package(
+            self,
+            &benchmark_id,
+            dataset_id,
+            version_no,
+            dataset_path,
         )
     }
 }

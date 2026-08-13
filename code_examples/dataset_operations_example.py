@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Kappa-Apk @nsu.ru
 # SPDX-License-Identifier: Apache-2.0
-"""Dataset operations flow example (Kappa-framework ≥ 2.10.0).
+"""Dataset operations flow example (Kappa-framework ≥ 2.11.0).
 
 Walks through a typical scripting flow:
 

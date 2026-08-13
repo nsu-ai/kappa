@@ -80,7 +80,7 @@ CIBW_ARCHS_LINUX="x86_64 aarch64" cibuildwheel --output-dir dist
 | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | push / PR | `cargo test`, clippy, maturin wheels (py3.9–3.13), sdist |
 | [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml) | Release / вручную | sdist + cibuildwheel на Linux/macOS/Windows → PyPI (Linux: QEMU для aarch64) |
 
-**Trusted publishing PyPI:** настройте окружение `pypi` на GitHub, создайте тег Release (например, `v3.0.3`).
+**Trusted publishing PyPI:** настройте окружение `pypi` на GitHub, создайте тег Release (например, `v3.0.4`).
 
 ---
 

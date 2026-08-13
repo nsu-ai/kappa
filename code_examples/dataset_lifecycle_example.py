@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Kappa-Apk @nsu.ru
 # SPDX-License-Identifier: Apache-2.0
-"""Dataset lifecycle ops example (Kappa-framework ≥ 2.10.0).
+"""Dataset lifecycle ops example (Kappa-framework ≥ 2.11.0).
 
 Covers flows beyond create/upload:
 
@@ -162,16 +162,28 @@ def main() -> int:
                 dataset_id, [str(entity_id)], remark="apk lifecycle demo"
             )
             print("mark_dataset_entities_labeled:", marked)
+            jid = marked.get("jobId") if isinstance(marked, dict) else None
+            if jid:
+                final = client.wait_for_bulk_mutation_job(dataset_id, jid)
+                print("mark-labeled job:", final.status, final.percent)
 
         if entity_id and args.soft_delete_entity:
             deleted = client.delete_dataset_entities(
                 [str(entity_id)], remark="apk lifecycle soft-delete"
             )
             print("delete_dataset_entities:", deleted)
+            jid = deleted.get("jobId") if isinstance(deleted, dict) else None
+            if jid:
+                final = client.wait_for_bulk_mutation_job(dataset_id, jid)
+                print("delete job:", final.status)
 
         if entity_id and args.recover_entity:
             recovered = client.recover_dataset_entities([str(entity_id)])
             print("recover_dataset_entities:", recovered)
+            jid = recovered.get("jobId") if isinstance(recovered, dict) else None
+            if jid:
+                final = client.wait_for_bulk_mutation_job(dataset_id, jid)
+                print("recover job:", final.status)
 
         if entity_id and args.download_entity_file:
             entity = client.get_dataset_entity(dataset_id, str(entity_id))

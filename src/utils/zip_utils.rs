@@ -127,6 +127,11 @@ pub async fn download_url_to_file(
     if !response.status().is_success() {
         return Err(format!("Download failed with status: {}", response.status()));
     }
+    // 208 carries a "download request still pending" message, not archive bytes.
+    if response.status().as_u16() == 208 {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Download failed with status: 208 {}", detail.trim()));
+    }
 
     let mut file = tokio::fs::File::create(dest)
         .await
