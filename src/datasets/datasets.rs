@@ -24,6 +24,7 @@ use crate::models::datasets_model::{
     BulkUploadJob,
     VersionBuildJob,
 };
+use crate::utils::cache_paths;
 use crate::utils::package_download;
 use crate::utils::zip_utils::{self, cache_is_complete};
 use crate::upload_limits::{
@@ -452,19 +453,15 @@ impl Datasets {
             resolved_version_no = dataset_version_details.version_no.clone();
         }
 
-        let data_dir = if dataset_path.is_empty() {
-            let home_dir = dirs::home_dir().ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>("Could not determine home directory")
-            })?;
-            home_dir
-                .join("cache")
-                .join("kappa-framework")
-                .join("datasets")
-                .join(format!("{}_{}", resolved_dataset_name, resolved_version_no))
-        } else {
-            Path::new(&dataset_path)
-                .join(format!("{}_{}", resolved_dataset_name, resolved_version_no))
-        };
+        let data_dir = cache_paths::dataset_cache_dir(
+            if dataset_path.is_empty() {
+                None
+            } else {
+                Some(dataset_path.as_str())
+            },
+            &resolved_dataset_name,
+            &resolved_version_no,
+        )?;
 
         // Skip if a prior download completed successfully (marker file present).
         if cache_is_complete(&data_dir) {
@@ -1230,6 +1227,9 @@ tf_dataset = tf.data.Dataset.from_generator(
     }
 
     /// PUT `/datasets/{dataset_id}` — JSON body matches `UpdateDatasetRequest`.
+    ///
+    /// Kappa ≥ 2.13 accepts `datasetShortInfo` (omit to leave unchanged). Soft-deleted
+    /// (status 0) → `409 DATASET_DELETED`; permanently deleted (5) → `409 DATASET_PERMANENTLY_DELETED`.
     pub fn update_dataset<T: ApiClient>(
         client: &T,
         dataset_id: i32,
@@ -1238,6 +1238,27 @@ tf_dataset = tf.data.Dataset.from_generator(
         let token = client.require_token()?;
         let endpoint = format!("/data-micro-services/v2/datasets/{}", dataset_id);
         client.make_request("PUT".to_string(), endpoint, Some(body_json), Some(token))
+    }
+
+    /// `PATCH /datasets/{dataset_id}/tags` — add/remove non-primary tags (Kappa ≥ 2.13).
+    ///
+    /// Removing or replacing the primary ML tag → `409 PRIMARY_TAG_IMMUTABLE`.
+    /// Older backends do not have this route (404).
+    pub fn patch_dataset_tags<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        add: Vec<String>,
+        remove: Vec<String>,
+    ) -> PyResult<PyObject> {
+        if add.is_empty() && remove.is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "patch_dataset_tags requires at least one tag in add or remove",
+            ));
+        }
+        let token = client.require_token()?;
+        let endpoint = format!("/data-micro-services/v2/datasets/{}/tags", dataset_id);
+        let body = serde_json::json!({ "add": add, "remove": remove }).to_string();
+        client.make_request("PATCH".to_string(), endpoint, Some(body), Some(token))
     }
 
     /// POST `/datasets/datasetEntities/new/...` via [`crate::traits::ApiClient::submit_dataset_entity_request`].
@@ -1390,7 +1411,7 @@ tf_dataset = tf.data.Dataset.from_generator(
         client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
     }
 
-    /// `GET /datasets/fields/{dataset_id}` — return dataset input-field schema.
+    /// `GET /datasets/fields/{dataset_id}` — field schema (inputs; Kappa ≥ 2.13 also merges outputs).
     pub fn get_dataset_fields<T: ApiClient>(client: &T, dataset_id: i32) -> PyResult<PyObject> {
         let endpoint = format!("/data-micro-services/v2/datasets/fields/{}", dataset_id);
         client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
@@ -1398,8 +1419,9 @@ tf_dataset = tf.data.Dataset.from_generator(
 
     /// Soft-delete a dataset by setting `datasetStatus = 0`.
     ///
-    /// The service uses soft-deletes; deleted datasets can be recovered via
-    /// [`Self::recover_datasets`].
+    /// Recover with [`Self::recover_datasets`] while status is 0 and still inside the
+    /// expiry window (Kappa ≥ 2.13, default 30 days). After purge, status is **5**
+    /// (permanently deleted) and recover returns `409 DATASET_PERMANENTLY_DELETED`.
     pub fn delete_dataset<T: ApiClient>(
         client: &T,
         dataset_id: i32,
@@ -1416,6 +1438,8 @@ tf_dataset = tf.data.Dataset.from_generator(
     }
 
     /// `POST /datasets/recover` — recover soft-deleted datasets by ID list.
+    ///
+    /// Kappa ≥ 2.13: after expiry / status 5 → `409 DATASET_PERMANENTLY_DELETED`.
     pub fn recover_datasets<T: ApiClient>(
         client: &T,
         dataset_ids: Vec<i32>,
@@ -1610,6 +1634,69 @@ tf_dataset = tf.data.Dataset.from_generator(
         }
         if let Some(ed) = end_date {
             endpoint.push_str(&format!("&endDate={}", urlencoding::encode(&ed)));
+        }
+        client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
+    }
+
+    /// `GET /datasets/datasetEntities/count/{dataset_id}` — cheap filtered count (Kappa ≥ 2.13).
+    ///
+    /// Same filters as [`Self::filter_dataset_entities`] without pagination. Older backends
+    /// do not have this route (404); use filter `includeTotal` / `size=1` there.
+    pub fn count_dataset_entities<T: ApiClient>(
+        client: &T,
+        dataset_id: i32,
+        entity_name: Option<String>,
+        entity_status: Option<i32>,
+        version_id: Option<i32>,
+        entity_id: Option<String>,
+        location_id: Option<i32>,
+        assignment_filter: Option<String>,
+        start_date: Option<String>,
+        end_date: Option<String>,
+    ) -> PyResult<PyObject> {
+        if let Some(af) = assignment_filter.as_deref()
+            && af != "assigned"
+            && af != "not_assigned"
+        {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "assignment_filter must be 'assigned' or 'not_assigned'",
+            ));
+        }
+        let mut endpoint = format!(
+            "/data-micro-services/v2/datasets/datasetEntities/count/{}",
+            dataset_id
+        );
+        let mut first = true;
+        let mut push = |key: &str, val: String| {
+            endpoint.push(if first { '?' } else { '&' });
+            first = false;
+            endpoint.push_str(key);
+            endpoint.push('=');
+            endpoint.push_str(&val);
+        };
+        if let Some(name) = entity_name {
+            push("dsEntityName", urlencoding::encode(&name).into_owned());
+        }
+        if let Some(status) = entity_status {
+            push("entityStatus", status.to_string());
+        }
+        if let Some(vid) = version_id {
+            push("versionId", vid.to_string());
+        }
+        if let Some(eid) = entity_id {
+            push("dsEntityId", urlencoding::encode(&eid).into_owned());
+        }
+        if let Some(lid) = location_id {
+            push("locationId", lid.to_string());
+        }
+        if let Some(af) = assignment_filter {
+            push("assignmentFilter", af);
+        }
+        if let Some(sd) = start_date {
+            push("startDate", urlencoding::encode(&sd).into_owned());
+        }
+        if let Some(ed) = end_date {
+            push("endDate", urlencoding::encode(&ed).into_owned());
         }
         client.make_request("GET".to_string(), endpoint, None, Some(client.require_token()?))
     }
@@ -2032,10 +2119,16 @@ tf_dataset = tf.data.Dataset.from_generator(
         client.make_request("POST".to_string(), endpoint, Some(sources_json), Some(token))
     }
 
-    /// `POST /datasets/datasetEntities/mark-labeled/{dataset_id}` — enqueue mark-labeled job (202).
+    /// `POST /datasets/datasetEntities/mark-labeled/{dataset_id}`.
     ///
-    /// Pass either a non-empty `dataset_entity_ids` list **or** `all_eligible=true` (Kappa ≥ 2.11).
-    /// Returns start payload with `jobId`; poll with [`Self::wait_for_bulk_mutation_job`].
+    /// Pass a non-empty `dataset_entity_ids` list **or** `all_eligible=true`.
+    ///
+    /// **Dual envelope (do not assume one ID is sync):**
+    /// - If the JSON has `jobId` → async job (2.11–2.12 any size; 2.13 multi-ID / `allEligible`).
+    ///   Poll with [`Self::wait_for_bulk_mutation_job`].
+    /// - If there is no `jobId` → Kappa ≥ 2.13 single-ID sync `200` result
+    ///   (`processed` / `succeeded` / `failures` / `detail`). Do not poll.
+    /// - HTTP `422` → completeness (`Cannot mark labeling done; …`) on the 2.13 sync path.
     pub fn mark_dataset_entities_labeled<T: ApiClient>(
         client: &T,
         dataset_id: i32,
@@ -2202,7 +2295,9 @@ tf_dataset = tf.data.Dataset.from_generator(
 
     /// Poll until a bulk-mutation job is terminal (`succeeded` / `failed` / `cancelled`).
     ///
-    /// Default timeout is 1 hour — dataset-wide mutations can cover millions of entities.
+    /// Default timeout is 1 hour. Does **not** treat `succeeded` with 0 processed as an
+    /// error (valid on Kappa 2.11–2.12). After wait, check `job.mutation_failed()` for the
+    /// Kappa ≥ 2.13 completeness signal (`status=failed` or `failedCount > 0`).
     pub fn wait_for_bulk_mutation_job<T: ApiClient>(
         client: &T,
         dataset_id: i32,
@@ -2361,19 +2456,15 @@ tf_dataset = tf.data.Dataset.from_generator(
             resolved_version_no = dataset_version_details.version_no.clone();
         }
 
-        let data_dir = if dataset_path.is_empty() {
-            let home_dir = dirs::home_dir().ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>("Could not determine home directory")
-            })?;
-            home_dir
-                .join("cache")
-                .join("kappa-framework")
-                .join("datasets")
-                .join(format!("{}_{}", resolved_dataset_name, resolved_version_no))
-        } else {
-            Path::new(&dataset_path)
-                .join(format!("{}_{}", resolved_dataset_name, resolved_version_no))
-        };
+        let data_dir = cache_paths::dataset_cache_dir(
+            if dataset_path.is_empty() {
+                None
+            } else {
+                Some(dataset_path.as_str())
+            },
+            &resolved_dataset_name,
+            &resolved_version_no,
+        )?;
 
         if cache_is_complete(&data_dir) {
             return Ok(DatasetDownloadDetails {

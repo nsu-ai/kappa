@@ -184,8 +184,9 @@ impl Benchmarks {
     /// Follows the same order as the web client: the dataset-services package for the
     /// benchmark's `datasetId` / `datasetVersionNo` first, then the benchmark proxy when
     /// only `benchmark.read` is held. Each path uses the legacy single zip when the
-    /// manifest reports one. Downloads are cached under
-    /// `~/cache/kappa-framework/benchmarks/{benchmark_id}/`, so a second call is a no-op.
+    /// manifest reports one. Downloads are cached under the OS cache dir
+    /// `kappa-framework/benchmarks/{benchmark_id}/` (legacy `~/cache/…` reused if complete),
+    /// so a second call is a no-op.
     pub fn internal_dataset(&mut self, dataset_path: Option<String>) -> PyResult<Vec<DatasetItem>> {
         let benchmark_id = self.benchmark_id.clone();
         // Reuse cached details when we have them so we skip one benchmark GET.
@@ -442,6 +443,11 @@ impl Benchmarks {
         upload_artifacts: bool,
         artifact_paths: Option<Vec<String>>,
         on_progress: Option<PyObject>,
+        attach_pipeline: bool,
+        pipeline: Option<PyObject>,
+        pipeline_type: Option<i32>,
+        model: Option<PyObject>,
+        entrypoint: Option<String>,
     ) -> PyResult<PyObject> {
         let result = self.result.clone().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -554,6 +560,12 @@ impl Benchmarks {
             .and_then(|v| v.as_i64())
             .map(|v| v as i32);
 
+        let detect_paths = if artifact_paths.is_empty() {
+            self.model_path.clone().map(|p| vec![p]).unwrap_or_default()
+        } else {
+            artifact_paths.clone()
+        };
+
         if !artifact_paths.is_empty() {
             let inference_id = created_inference_id.ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -582,6 +594,38 @@ impl Benchmarks {
                 Ok(())
             })?;
         }
+
+        let pipeline_status = if attach_pipeline {
+            let inference_id = created_inference_id.unwrap_or(0);
+            let project_names: Vec<String> = self
+                .file_information
+                .as_ref()
+                .map(|files| files.iter().map(|f| f.file_name.clone()).collect())
+                .unwrap_or_default();
+            Python::with_gil(|py| {
+                let client = self.client.borrow(py);
+                let pipeline_owned = pipeline.as_ref().map(|obj| obj.bind(py));
+                let model_owned = model.as_ref().map(|obj| obj.bind(py));
+                #[allow(clippy::option_as_ref_deref)]
+                {
+                    crate::client::attach_inference_pipeline(
+                        py,
+                        &*client,
+                        &model_id,
+                        inference_id,
+                        &detect_paths,
+                        pipeline_owned.as_ref().map(|b| &**b),
+                        pipeline_type.unwrap_or(crate::pipeline_detect::PIPELINE_TYPE_BENCHMARK),
+                        model_owned.as_ref().map(|b| &**b),
+                        entrypoint.as_deref(),
+                        &project_names,
+                        None,
+                    )
+                }
+            })
+        } else {
+            crate::pipeline_detect::PipelineDetect::skipped("skipped").to_status_json()
+        };
 
         if complete_inference {
             let version_id = match model_version_id.or(assigned_version_id) {
@@ -613,7 +657,11 @@ impl Benchmarks {
             // The link moved the benchmark to status 5 and stamped the version on it.
             self.benchmark_details = None;
         }
-        Ok(json_obj)
+        let mut created = created;
+        if let Some(obj) = created.as_object_mut() {
+            obj.insert("pipeline".to_string(), pipeline_status);
+        }
+        Python::with_gil(|py| crate::utils::python_json::json_value_to_pyobject(py, &created))
     }
 }
 
@@ -784,6 +832,11 @@ impl Benchmarks {
     /// multipart session, so multi-GB checkpoints work here. ``on_progress`` receives
     /// ``(file_name, bytes_sent, total_bytes, percent)``.
     ///
+    /// After artifacts are uploaded, a pipeline draft is auto-detected from the running
+    /// program and PUT on the inference **before** the version is created (Kappa ≥ 2.14;
+    /// missing route is skipped). Pass ``attach_pipeline=False`` to skip, or ``pipeline=``
+    /// with an explicit body.
+    ///
     /// # Python Example
     /// ```python
     /// benchmark.save_benchmark(predictions, metrics, model_path="./model")
@@ -796,7 +849,12 @@ impl Benchmarks {
         create_version=true,
         upload_artifacts=false,
         artifact_paths=None,
-        on_progress=None
+        on_progress=None,
+        attach_pipeline=true,
+        pipeline=None,
+        pipeline_type=None,
+        model=None,
+        entrypoint=None
     ))]
     pub fn submit_benchmark(
         &mut self,
@@ -807,6 +865,11 @@ impl Benchmarks {
         upload_artifacts: bool,
         artifact_paths: Option<Vec<String>>,
         on_progress: Option<PyObject>,
+        attach_pipeline: bool,
+        pipeline: Option<PyObject>,
+        pipeline_type: Option<i32>,
+        model: Option<PyObject>,
+        entrypoint: Option<String>,
     ) -> PyResult<PyObject> {
         self.internal_submit_benchmark(
             strict,
@@ -816,6 +879,11 @@ impl Benchmarks {
             upload_artifacts,
             artifact_paths,
             on_progress,
+            attach_pipeline,
+            pipeline,
+            pipeline_type,
+            model,
+            entrypoint,
         )
     }
 }

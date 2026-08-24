@@ -165,7 +165,16 @@ def main() -> int:
             jid = marked.get("jobId") if isinstance(marked, dict) else None
             if jid:
                 final = client.wait_for_bulk_mutation_job(dataset_id, jid)
-                print("mark-labeled job:", final.status, final.percent)
+                print(
+                    "mark-labeled job:",
+                    final.status,
+                    final.percent,
+                    f"fail={final.failed_count}",
+                )
+                if final.mutation_failed():
+                    print("completeness failed:", final.error_detail)
+            else:
+                print("mark-labeled sync (no jobId, Kappa ≥ 2.13 single ID)")
 
         if entity_id and args.soft_delete_entity:
             deleted = client.delete_dataset_entities(

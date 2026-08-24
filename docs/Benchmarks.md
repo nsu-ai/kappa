@@ -13,7 +13,7 @@ data = bm.dataset()              # download + cache benchmark dataset
 bm.setup_project()               # optional: attach src/ file fingerprints
 
 predictions = [
-    {"entity_id": item.entity_id, "original": ..., "predicted": ...}
+    {"entity_id": item.entity_id, "predicted": {"label": ...}}
     for item in data
 ]
 metrics = {"accuracy": 0.95, "f1": 0.92}
@@ -31,15 +31,17 @@ response = bm.submit_benchmark(upload_artifacts=True)   # inference + weights + 
 | Method | Description |
 |---|---|
 | `benchmark_id` | UUID property |
-| `dataset(dataset_path?)` | Download the evaluation set → `list[DatasetItem]`; cache under `~/cache/kappa-framework/benchmarks/{id}/` |
+| `dataset(dataset_path?)` | Download the evaluation set → `list[DatasetItem]`; cache under the OS cache dir (`kappa-framework/benchmarks/{id}/`) |
 | `setup_project()` | Sample fingerprints from nearest `src/` directory |
 | `set_model_id(model_id)` / `get_model_id()` | Override model ID for submission |
 | `debug_benchmark_details()` | Human-readable status string |
 | `save_benchmark(predictions, metrics?, model_path?)` | Build `BenchmarkResult` in memory |
 | `saved_result` | The last saved `BenchmarkResult`, or `None` |
-| `submit_benchmark(strict?, model_version_id?, complete_inference?, create_version?, upload_artifacts?, artifact_paths?, on_progress?)` | `POST …/models/inferences/{model_id}`, upload artifacts, then link it to the benchmark |
+| `submit_benchmark(strict?, model_version_id?, complete_inference?, create_version?, upload_artifacts?, artifact_paths?, on_progress?, attach_pipeline?, pipeline?, pipeline_type?, model?, entrypoint?)` | `POST …/models/inferences/{model_id}`, upload artifacts, **pipeline draft PUT** (Kappa ≥ 2.14, before version create), then link |
 
-`save_benchmark` accepts predictions-only results, or attaches model/application metadata from `setup_project()`, `model_path`, or prior `set_model_path`.
+`save_benchmark` accepts predictions-only results, or attaches model/application metadata from `setup_project()`, `model_path`, or prior `set_model_path`. Required `predicted` keys follow the model's inference schema (dataset outputs on Kappa ≥ 2.14, e.g. `label` / `output_text`). Extra keys such as `confidence` are kept. `original` is optional and ignored as ground truth. Metrics are sent as a dict of name → number; Kappa ≥ 2.14 accepts unregistered numeric names, while older backends may 400 on keys not listed in the schema.
+
+After `upload_artifacts`, `submit_benchmark` auto-detects a pipeline from the running program (`sys.modules`, `__main__.__file__`, optional `model=`) and the weight files, then PUTs it on the inference **before** creating the version so Kappa ≥ 2.14 can promote it. Pre-2.14 gateways 404 that route and the submit still succeeds. Pass `attach_pipeline=False` to skip, or `pipeline={...}` for an explicit body (`source: manual`) that can include architecture, classes, and preprocess — autodect only records framework / artifact filename / script name and does **not** host inference. Mixed `.pt`+`.onnx` without an override does not guess.
 
 Saving an inference alone leaves the benchmark at *Pending Inference*. `submit_benchmark()` therefore also calls `POST …/benchmarks/inferences/{benchmark_id}/{model_version_id}`, which advances it to *Inference Completed*. That link needs a **model version**, and the endpoint rejects anything else with `404 MODEL_VERSION_NOT_FOUND`. The version is resolved in this order:
 
@@ -158,7 +160,7 @@ Missing `valid` / `success` in the response JSON is treated as **failure** (`Fal
 
 | Resource | Cache path |
 |---|---|
-| Benchmark evaluation set | `~/cache/kappa-framework/benchmarks/{benchmark_id}/` |
+| Benchmark evaluation set | OS cache `kappa-framework/benchmarks/{benchmark_id}/` (legacy `~/cache/…` reused if complete) |
 | Model run files | From `model_path` or `setup_project()` metadata |
 
 A download is only cached once every shard has been extracted, so an interrupted download is retried from scratch rather than left half-complete.

@@ -364,6 +364,12 @@ fn normalize_prediction(
         (Value::String(label), Some(key)) => {
             serde_json::json!({ key: label })
         }
+        (Value::String(_), None) => {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "prediction #{}: a bare predicted string is only wrapped when the schema has a single required string key; pass a dict matching get_model_inference_schema()",
+                index
+            )));
+        }
         (Value::Null, _) => {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "prediction #{} is missing 'predicted'",
@@ -523,5 +529,125 @@ mod tests {
         );
         let generic = serde_json::json!({"schemaJson": {"properties": {}}});
         assert_eq!(required_predicted_key(&generic), None);
+    }
+
+    fn schema_with_predicted_key(kind: &str, key: &str) -> Value {
+        serde_json::json!({
+            "source": "type",
+            "kind": kind,
+            "schemaJson": {
+                "properties": {
+                    "results": {
+                        "properties": {
+                            "predictions": {
+                                "items": {
+                                    "properties": {
+                                        "predicted": {
+                                            "required": [key],
+                                            "properties": {
+                                                key: {"type": "string"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn wraps_bare_label_into_dataset_output_key() {
+        let predictions = serde_json::json!([{"entityId": "e1", "predicted": "hello"}]);
+        let document = build_document(
+            "m1",
+            None,
+            Some(predictions),
+            None,
+            &[],
+            Some(&schema_with_predicted_key("image_to_text", "output_text")),
+        )
+        .unwrap();
+        assert_eq!(
+            document["results"]["predictions"][0]["predicted"]["output_text"],
+            "hello"
+        );
+    }
+
+    #[test]
+    fn does_not_rename_class_name_to_label() {
+        let predictions = serde_json::json!([{
+            "entityId": "e1",
+            "predicted": {"class_name": "pizza", "confidence": 0.9}
+        }]);
+        let document = build_document(
+            "m1",
+            None,
+            Some(predictions),
+            None,
+            &[],
+            Some(&schema_with_predicted_key("classification", "label")),
+        )
+        .unwrap();
+        let predicted = &document["results"]["predictions"][0]["predicted"];
+        assert_eq!(predicted["class_name"], "pizza");
+        assert!(predicted.get("label").is_none());
+    }
+
+    #[test]
+    fn keeps_original_when_caller_sends_it() {
+        let predictions = serde_json::json!([{
+            "entityId": "e1",
+            "original": {"note": "legacy"},
+            "predicted": {"label": "pizza"}
+        }]);
+        let document = build_document(
+            "m1",
+            None,
+            Some(predictions),
+            None,
+            &[],
+            Some(&schema_with_predicted_key("classification", "label")),
+        )
+        .unwrap();
+        assert_eq!(
+            document["results"]["predictions"][0]["original"]["note"],
+            "legacy"
+        );
+        assert_eq!(
+            document["results"]["predictions"][0]["predicted"]["label"],
+            "pizza"
+        );
+    }
+
+    #[test]
+    fn bare_string_rejected_when_schema_needs_a_dict() {
+        let schema = serde_json::json!({
+            "kind": "image_to_image",
+            "schemaJson": {
+                "properties": {
+                    "results": {
+                        "properties": {
+                            "predictions": {
+                                "items": {
+                                    "properties": {
+                                        "predicted": {
+                                            "required": ["output_image"],
+                                            "properties": {
+                                                "output_image": {"type": "object"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let predictions = serde_json::json!([{"entityId": "e1", "predicted": "pred.png"}]);
+        assert!(build_document("m1", None, Some(predictions), None, &[], Some(&schema)).is_err());
     }
 }

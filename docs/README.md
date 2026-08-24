@@ -1,6 +1,6 @@
 # kf-sdk documentation (`import kappa_apk`)
 
-> **PyPI:** `kf-sdk` · **Import:** `kappa_apk` · **Version:** 3.0.4 · **Branch:** `main`  
+> **PyPI:** `kf-sdk` · **Import:** `kappa_apk` · **Version:** 3.0.5 · **Branch:** `main`  
 > **Python:** 3.9+ · **API:** Kappa-framework **v2** (JWT identity — no `user_id` / `user_type_id` in URLs)  
 > **Requires backend:** Kappa-framework **≥ 2.11.0** (`kappa_apk.min_backend_version()`)
 >

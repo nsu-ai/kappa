@@ -51,7 +51,9 @@ result = client.add_dataset(NewDataset(
 ))
 
 client.update_dataset(42, UpdateDatasetRequest(dataset_name="MyDataset-v2", remark="Переименован"))
-client.delete_dataset(42, remark="Устарел")   # мягкое удаление
+client.update_dataset(42, UpdateDatasetRequest(dataset_short_info="Классификация — пицца / не пицца"))
+client.patch_dataset_tags(42, add=["my-batch"], remove=["old-tag"])
+client.delete_dataset(42, remark="Устарел")   # мягкое удаление; восстановление до истечения срока (затем status 5)
 ```
 
 **Правила тегов:** каталог `GET …/system/config/dataset_tags_{dataset_type}` (тот же список при создании модели). Бэкенд требует ≥1 предопределённый ML-тег. Ставьте его **первым** — Label Studio / CVAT берут первый predefined. Custom-теги — после него. Хелперы: `join_ml_tags`, `list_predefined_ml_tags`.
@@ -99,7 +101,9 @@ client.delete_dataset_entities(["uuid-1", "uuid-2"], remark="Дубликаты 
 
 Страницы сущностей нумеруются **с 1**, как и страницы датасетов, а направление сортировки задаётся через `order` (не `order_keyword`). Дополнительно доступны `entity_id`, `location_id`, `start_date` и `end_date`. Фильтра по split на сервере нет — читайте `dsEntityInfo.split` из каждого элемента.
 
-Передайте `file_category="input"|"output"` и опционально `split="train"|"validation"|"test"` при создании/обновлении. Файлы одной сущности — до **2 GB**.
+Передайте `file_category="input"|"output"` и опционально `split="train"|"validation"|"test"` при создании/обновлении. Файлы одной сущности — до **2 GB**. `entity_source` — 3–100 символов (Kappa ≥ 2.13).
+
+На Kappa ≥ 2.13 create / bulk **не** требуют output-полей и output-файлов. Они проверяются при mark-labeled и self-verify Pass. `get_dataset_fields` сливает `dataset_outputs`. Одиночное создание tabular использует тот же валидатор, что и bulk (`422 COLUMN_REQUIRED:{col}`). Имена датасетов уникальны **без учёта регистра**; имя со статусом **5** можно использовать снова.
 
 ---
 
@@ -122,9 +126,15 @@ client.delete_dataset_entities(["uuid-1", "uuid-2"], remark="Дубликаты 
 
 Self-verify, auto-verify, mark-labeled, delete/recover/delete-files ставят асинхронный job (`202` + `jobId`). Опрос через `BulkMutationJob`. Одновременно — один активный mutation на датасет (**409**).
 
+Опрашивайте job **только если** в ответе есть `jobId` (2.11–2.12 любой размер; 2.13 несколько ID / `allEligible`). Один ID на Kappa ≥ 2.13 может вернуть sync `200` без `jobId` или `422`. `succeeded` с 0 processed остаётся OK на 2.11–2.12; на ≥ 2.13 используйте `job.mutation_failed()`.
+
 ```python
 start = client.mark_dataset_entities_labeled(42, all_eligible=True)
-final = client.wait_for_bulk_mutation_job(42, start["jobId"])
+jid = start.get("jobId") if isinstance(start, dict) else None
+if jid:
+    final = client.wait_for_bulk_mutation_job(42, jid)
+    if final.mutation_failed():
+        raise RuntimeError(final.error_detail or final.status)
 client.bulk_self_verify_dataset_entities(42, status=1)  # 1=Pass, 3=Needs Modification
 client.auto_verify_dataset_entities(42)
 ```
@@ -156,7 +166,7 @@ details = client.get_dataset_version_details(dataset_name="MyDS", version_no="1.
 
 Используйте `download_dataset_version_package`: он читает манифест и качает шарды, а при отсутствии пакета (до 2.11 или один шард) откатывается на legacy-zip `download_dataset_version_archive`.
 
-Архивы загружаются в `~/cache/kappa-framework/datasets/{dataset_name}_{version_no}/`. Повторные вызовы пропускают загрузку, если каталог кэша уже существует.
+Архивы загружаются в кэш ОС (`%LOCALAPPDATA%\kappa-framework\datasets\…` в Windows, `~/.cache/kappa-framework/datasets/…` в Linux). Уже готовое дерево `~/cache/kappa-framework/…` переиспользуется. Повторные вызовы пропускают загрузку, если маркер кэша на месте.
 
 ```python
 info = client.download_dataset_version_package(dataset_name="MyDS", version_no="1.0.0")

@@ -90,7 +90,7 @@ python code_examples/bulk_mutation_and_version_build.py --dataset-id 42 --create
 
 ### `benchmark_and_model_artifacts.py`
 
-**Purpose**: Benchmark evaluation-set download (package → benchmark proxy → legacy zip), submitting predictions with artifact upload and inference linking, report PDF download, schema-driven `write_model_inference()`, and artifact upload/download including the resumable multipart session used for large weights. Requires Kappa-framework **≥ 2.11.0**.
+**Purpose**: Benchmark evaluation-set download (package → benchmark proxy → legacy zip), submitting predictions with artifact upload and inference linking (Kappa ≥ 2.14 also PUTs a pipeline draft before version create), report PDF download, schema-driven `write_model_inference()` (`predicted.label` / `output_text`; `original` optional), and artifact upload/download including the resumable multipart session used for large weights. Requires Kappa-framework **≥ 2.11.0**.
 
 ```bash
 python code_examples/benchmark_and_model_artifacts.py --benchmark-id <uuid> --run --model-path ./model

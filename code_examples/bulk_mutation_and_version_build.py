@@ -5,9 +5,12 @@
 
 Demonstrates:
 
-1. Mark-labeled (``all_eligible`` or entity IDs) + wait
-2. Optional self-verify / auto-verify
+1. Mark-labeled (``all_eligible`` or entity IDs) + wait **only if** ``jobId``
+2. Optional self-verify / auto-verify (``mutation_failed()`` on Kappa ≥ 2.13)
 3. Create version → wait for archive build → publish / package download
+
+On Kappa ≥ 2.13 a **single** mark-labeled ID may return a sync ``200`` (no ``jobId``)
+or ``422``. Kappa 2.11–2.12 always returns ``jobId`` for any size.
 
 Usage::
 
@@ -69,7 +72,8 @@ def main() -> int:
     def on_mut(job):
         print(
             f"  mutation {job.job_type} {job.status} {job.phase} "
-            f"{job.percent}% {job.processed_count}/{job.total_count}"
+            f"{job.percent}% {job.processed_count}/{job.total_count} "
+            f"ok={job.succeeded_count} skip={job.skipped_count} fail={job.failed_count}"
         )
 
     def on_build(job):
@@ -96,7 +100,16 @@ def main() -> int:
                 timeout_secs=args.timeout_secs,
                 on_progress=on_mut,
             )
-            print("mark-labeled final:", final.status, final.as_dict())
+            print(
+                "mark-labeled final:",
+                final.status,
+                final.job_type,
+                f"ok={final.succeeded_count} skip={final.skipped_count} fail={final.failed_count}",
+            )
+            if final.mutation_failed():
+                print("mark-labeled completeness failed:", final.error_detail, file=sys.stderr)
+        else:
+            print("mark-labeled sync result (no jobId):", start)
 
     if args.self_verify_pass:
         print("self-verify-stats:", client.get_self_verify_stats(dataset_id))
@@ -110,7 +123,14 @@ def main() -> int:
                 timeout_secs=args.timeout_secs,
                 on_progress=on_mut,
             )
-            print("self-verify final:", final.status, final.error_detail)
+            print(
+                "self-verify final:",
+                final.status,
+                f"ok={final.succeeded_count} skip={final.skipped_count} fail={final.failed_count}",
+                final.error_detail,
+            )
+            if final.mutation_failed():
+                print("self-verify completeness failed:", final.error_detail, file=sys.stderr)
 
     if args.auto_verify:
         start = client.auto_verify_dataset_entities(dataset_id)

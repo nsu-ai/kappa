@@ -10,6 +10,7 @@ mod models;
 mod inference_writer;
 mod model_artifacts;
 mod models_api;
+mod pipeline_detect;
 mod users;
 mod benchmarks;
 mod utils;

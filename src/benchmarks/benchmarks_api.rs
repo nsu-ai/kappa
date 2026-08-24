@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::traits::ApiClient;
+use crate::utils::cache_paths;
 use crate::utils::package_download::{self, PackagePlan};
 use crate::utils::zip_utils::{self, cache_is_complete};
 
@@ -441,21 +442,7 @@ impl BenchmarksApi {
     }
 
     fn benchmark_cache_dir(benchmark_id: &str, dataset_path: Option<String>) -> PyResult<PathBuf> {
-        let dataset_path = dataset_path.unwrap_or_default();
-        if dataset_path.is_empty() {
-            let home_dir = dirs::home_dir().ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Could not determine home directory",
-                )
-            })?;
-            Ok(home_dir
-                .join("cache")
-                .join("kappa-framework")
-                .join("benchmarks")
-                .join(benchmark_id))
-        } else {
-            Ok(PathBuf::from(dataset_path).join(benchmark_id))
-        }
+        cache_paths::benchmark_cache_dir(dataset_path.as_deref(), benchmark_id)
     }
 
     /// Direct dataset-services package download into `data_dir`.

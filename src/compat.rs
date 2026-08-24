@@ -15,6 +15,9 @@ pub const MIN_BACKEND_VERSION: &str = "2.11.0";
 /// Notes shown to users about why 2.11.0+ is required.
 pub const COMPAT_NOTES: &[&str] = &[
     "Bulk mutations (self-verify, auto-verify, mark-labeled, delete/recover/files): async 202 + job poll",
+    "Mark-labeled dual envelope: poll only if start JSON has jobId (2.11–2.12 any size; 2.13 multi/allEligible). Kappa ≥ 2.13 single-ID may return 200 (no jobId) or 422 completeness",
+    "Bulk job: status=failed or failedCount>0 is 2.13 completeness failure; succeeded with 0 processed remains valid on 2.11–2.12",
+    "Kappa ≥ 2.13: required outputs gated at Labelled/Verified, not at create; get_dataset_fields merges dataset_outputs",
     "Version create/refresh: archive build jobs; wait until buildStatus=ready before publish/download",
     "Version package: sharded manifest + shard download (legacy single-zip archive still available)",
     "Bulk upload: staging/retry, archiveLayout, admission (429), large zip (up to 50 GB)",
@@ -22,8 +25,10 @@ pub const COMPAT_NOTES: &[&str] = &[
     "CSV bulk: client allows up to 2 GB; backend default BULK_UPLOAD_MAX_CSV_BYTES is 50 MB",
     "Archive dataset_schema: input_output needs inputDataPath; classes needs classes[]",
     "Tabular custom-schema + entity split; Dataset Admin / dataset.delete",
-    "Model inference artifacts + file_category 1–5",
+    "Model inference artifacts + file_category 1–5; Kappa ≥ 2.14 also 6 (prediction output) with entityId/fieldName",
     "ML tags: first tag must be predefined for dataset_type/model_type (dataset_tags_{id})",
+    "PUT datasetShortInfo max 10k; PATCH /datasets/{id}/tags; entity_source max 100 (Kappa ≥ 2.13)",
+    "Kappa ≥ 2.14: predicted keys follow dataset outputs (label/output_text); original is not required; inference pipeline draft auto-detect on submit",
 ];
 
 /// Return the minimum supported Kappa-framework version (`"2.11.0"`).

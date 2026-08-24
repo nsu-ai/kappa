@@ -103,10 +103,20 @@ pub fn validate_archive_dataset_schema(
     Ok(())
 }
 
+/// Provenance / bulk `source` / `entitySource`: min 3, max 100 (Kappa ≥ 2.13 VARCHAR(100)).
+pub const ENTITY_SOURCE_MIN: usize = 3;
+pub const ENTITY_SOURCE_MAX: usize = 100;
+
 pub fn validate_source(source: &str) -> PyResult<()> {
-    if source.trim().len() < 3 {
+    let n = source.trim().chars().count();
+    if n < ENTITY_SOURCE_MIN {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
             "source must be at least 3 characters",
+        ));
+    }
+    if n > ENTITY_SOURCE_MAX {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Entity source must be at most 100 characters.",
         ));
     }
     Ok(())
@@ -179,6 +189,16 @@ mod upload_limits_tests {
             Some(&json!({"classes": [{"className": "cat", "path": "cat"}]}))
         )
         .is_ok());
+    }
+
+    #[test]
+    fn source_accepts_3_to_100_chars() {
+        assert!(validate_source("ab").is_err());
+        assert!(validate_source("abc").is_ok());
+        let ok_100: String = "x".repeat(100);
+        assert!(validate_source(&ok_100).is_ok());
+        let too_long: String = "x".repeat(101);
+        assert!(validate_source(&too_long).is_err());
     }
 }
 
