@@ -70,8 +70,8 @@ def run_benchmark(
     print("loaded", len(data), "samples")
 
     predictions = [
-        {"entity_id": item.entity_id, "original": item.annotations,
-         "predicted": {"class_name": "unknown", "confidence": 0.0}}
+        {"entity_id": item.entity_id,
+         "predicted": {"label": "unknown", "confidence": 0.0}}
         for item in data
     ]
     bm.save_benchmark(predictions, {"accuracy": 0.0}, model_path=model_path)
@@ -100,7 +100,7 @@ def write_inference(
     written = client.write_model_inference(
         model_id,
         predictions=[
-            {"entityId": "sample-1", "predicted": {"class_name": "pizza", "confidence": 0.98}},
+            {"entityId": "sample-1", "predicted": {"label": "pizza", "confidence": 0.98}},
             # A bare label works too — it is wrapped into the key the schema requires.
             {"entityId": "sample-2", "predicted": "sushi"},
         ],

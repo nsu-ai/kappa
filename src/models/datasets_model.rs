@@ -276,6 +276,7 @@ impl NewDataset {
 
     /// Serialize to the JSON string expected by the dataset service (camelCase keys).
     pub fn to_api_json(&self) -> PyResult<String> {
+        validate_dataset_short_info(&self.dataset_short_info)?;
         serde_json::to_string(self).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Failed to serialize NewDataset: {}",
@@ -285,7 +286,22 @@ impl NewDataset {
     }
 }
 
-/// Mirrors `UpdateDatasetRequest` for `PUT .../datasets/{user}/{user_type}/{dataset_id}`.
+/// Max length for `datasetShortInfo` on create/update (Kappa ≥ 2.13; same as model/benchmark description).
+pub const DATASET_SHORT_INFO_MAX: usize = 10000;
+
+fn validate_dataset_short_info(s: &str) -> PyResult<()> {
+    if s.chars().count() > DATASET_SHORT_INFO_MAX {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "datasetShortInfo must be at most {} characters",
+            DATASET_SHORT_INFO_MAX
+        )));
+    }
+    Ok(())
+}
+
+/// Mirrors `UpdateDatasetRequest` for `PUT .../datasets/{dataset_id}`.
+///
+/// Omit `dataset_short_info` (`None`) to leave the existing blurb unchanged (Kappa ≥ 2.13).
 #[pyclass]
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -302,27 +318,35 @@ pub struct UpdateDatasetRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[pyo3(get, set)]
     pub dataset_verification_type: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[pyo3(get, set)]
+    pub dataset_short_info: Option<String>,
 }
 
 #[pymethods]
 impl UpdateDatasetRequest {
     #[new]
-    #[pyo3(signature = (dataset_name=None, dataset_status=None, remark=None, dataset_verification_type=None))]
+    #[pyo3(signature = (dataset_name=None, dataset_status=None, remark=None, dataset_verification_type=None, dataset_short_info=None))]
     pub fn new(
         dataset_name: Option<String>,
         dataset_status: Option<i32>,
         remark: Option<String>,
         dataset_verification_type: Option<i32>,
+        dataset_short_info: Option<String>,
     ) -> Self {
         UpdateDatasetRequest {
             dataset_name,
             dataset_status,
             remark,
             dataset_verification_type,
+            dataset_short_info,
         }
     }
 
     pub fn to_api_json(&self) -> PyResult<String> {
+        if let Some(ref s) = self.dataset_short_info {
+            validate_dataset_short_info(s)?;
+        }
         serde_json::to_string(self).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Failed to serialize UpdateDatasetRequest: {}",
@@ -432,6 +456,7 @@ impl NewDatasetEntity {
         }
         map.insert("dsEntityName".to_string(), json!(self.ds_entity_name));
         if let Some(ref s) = self.entity_source {
+            crate::upload_limits::validate_source(s)?;
             map.insert("entitySource".to_string(), json!(s));
         }
         map.insert("collectedOn".to_string(), json!(self.collected_on));
@@ -573,6 +598,7 @@ impl UpdateDatasetEntity {
             map.insert("dsEntityName".to_string(), json!(n));
         }
         if let Some(ref s) = self.entity_source {
+            crate::upload_limits::validate_source(s)?;
             map.insert("entitySource".to_string(), json!(s));
         }
         if let Some(ref c) = self.collected_on {
@@ -1087,6 +1113,33 @@ impl BulkMutationJob {
         self.bool_field("canCancel", "can_cancel")
     }
 
+    /// `{processed, succeeded, skipped, failed}` when the backend sends `resultSummary`.
+    #[getter]
+    fn result_summary(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let v = self
+            .raw
+            .get("resultSummary")
+            .or_else(|| self.raw.get("result_summary"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let json_str = serde_json::to_string(&v).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+        })?;
+        let json_mod = py.import("json")?;
+        Ok(json_mod.call_method1("loads", (json_str,))?.into())
+    }
+
+    /// True when Kappa ≥ 2.13 reports a completeness / mutation failure.
+    ///
+    /// `status=failed` **or** `failedCount > 0`. A 2.11–2.12 job that finished
+    /// `succeeded` with 0 processed returns **False** (legacy no-op success).
+    fn mutation_failed(&self) -> bool {
+        matches!(
+            self.status().to_ascii_lowercase().as_str(),
+            "failed" | "error"
+        ) || self.failed_count() > 0
+    }
+
     /// True for `succeeded` / `failed` / `cancelled`.
     fn is_terminal(&self) -> bool {
         matches!(
@@ -1286,7 +1339,7 @@ impl VersionBuildJob {
 
 #[cfg(test)]
 mod bulk_upload_job_tests {
-    use super::{BulkMutationJob, BulkUploadJob, VersionBuildJob};
+    use super::{BulkMutationJob, BulkUploadJob, UpdateDatasetRequest, VersionBuildJob};
     use serde_json::json;
 
     #[test]
@@ -1338,6 +1391,49 @@ mod bulk_upload_job_tests {
         }));
         assert!(!run.is_wait_complete());
         assert_eq!(run.percent(), Some(50));
+    }
+
+    #[test]
+    fn mutation_failed_dual_semantics() {
+        let legacy_ok = BulkMutationJob::from_json_value(json!({
+            "jobId": "m1",
+            "jobType": "self_verify",
+            "status": "succeeded",
+            "processedCount": 0,
+            "succeededCount": 0,
+            "skippedCount": 0,
+            "failedCount": 0
+        }));
+        assert!(legacy_ok.is_terminal());
+        assert!(!legacy_ok.mutation_failed());
+
+        let v213_fail = BulkMutationJob::from_json_value(json!({
+            "jobId": "m2",
+            "jobType": "self_verify",
+            "status": "failed",
+            "processedCount": 1,
+            "succeededCount": 0,
+            "skippedCount": 0,
+            "failedCount": 1,
+            "errorDetail": "e1: Cannot mark as verified; missing output_text"
+        }));
+        assert!(v213_fail.is_terminal());
+        assert!(v213_fail.mutation_failed());
+        assert_eq!(v213_fail.job_type(), "self_verify");
+        assert!(v213_fail.error_detail().unwrap().contains("Cannot mark as verified"));
+    }
+
+    #[test]
+    fn update_dataset_omits_short_info_when_none() {
+        let u = UpdateDatasetRequest::new(Some("n".into()), None, None, None, None);
+        let json = u.to_api_json().unwrap();
+        assert!(json.contains("datasetName"));
+        assert!(!json.contains("datasetShortInfo"));
+        let with_info = UpdateDatasetRequest::new(
+            None, None, None, None, Some("blurb".into()),
+        );
+        let json = with_info.to_api_json().unwrap();
+        assert!(json.contains("datasetShortInfo"));
     }
 
     #[test]

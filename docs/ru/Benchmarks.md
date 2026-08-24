@@ -13,7 +13,7 @@ data = bm.dataset()              # загрузка и кэш датасета �
 bm.setup_project()               # опционально: отпечатки файлов src/
 
 predictions = [
-    {"entity_id": item.entity_id, "original": ..., "predicted": ...}
+    {"entity_id": item.entity_id, "predicted": {"label": ...}}
     for item in data
 ]
 metrics = {"accuracy": 0.95, "f1": 0.92}
@@ -31,15 +31,17 @@ response = bm.submit_benchmark(upload_artifacts=True)   # инференс + в�
 | Метод | Описание |
 |---|---|
 | `benchmark_id` | Свойство UUID |
-| `dataset(dataset_path?)` | Загрузка оценочного набора → `list[DatasetItem]`; кэш в `~/cache/kappa-framework/benchmarks/{id}/` |
+| `dataset(dataset_path?)` | Загрузка оценочного набора → `list[DatasetItem]`; кэш в каталоге кэша ОС (`kappa-framework/benchmarks/{id}/`) |
 | `setup_project()` | Отпечатки файлов из ближайшего каталога `src/` |
 | `set_model_id(model_id)` / `get_model_id()` | Переопределение ID модели для отправки |
 | `debug_benchmark_details()` | Человекочитаемая строка статуса |
 | `save_benchmark(predictions, metrics?, model_path?)` | Формирование `BenchmarkResult` в памяти |
 | `saved_result` | Последний сохранённый `BenchmarkResult` или `None` |
-| `submit_benchmark(strict?, model_version_id?, complete_inference?, create_version?, upload_artifacts?, artifact_paths?, on_progress?)` | `POST …/models/inferences/{model_id}`, загрузка артефактов, затем привязка к бенчмарку |
+| `submit_benchmark(strict?, model_version_id?, complete_inference?, create_version?, upload_artifacts?, artifact_paths?, on_progress?, attach_pipeline?, pipeline?, pipeline_type?, model?, entrypoint?)` | `POST …/models/inferences/{model_id}`, artifact upload, **pipeline draft PUT** (Kappa ≥ 2.14, before version create), then link |
 
-`save_benchmark` принимает результаты только с predictions, или прикрепляет метаданные модели/приложения из `setup_project()`, `model_path` или ранее установленного `set_model_path`.
+`save_benchmark` принимает результаты только с predictions, или прикрепляет метаданные модели/приложения из `setup_project()`, `model_path` или ранее установленного `set_model_path`. Обязательные ключи `predicted` берутся из схемы инференса модели (на Kappa ≥ 2.14 — выходы датасета, например `label` / `output_text`). Лишние ключи вроде `confidence` сохраняются. `original` не обязателен и не используется как эталон. Метрики — словарь имя → число; Kappa ≥ 2.14 принимает незарегистрированные числовые имена, а старые бэкенды могут ответить 400, если ключа нет в схеме.
+
+После загрузки артефактов `submit_benchmark` определяет pipeline по запущенной программе (`sys.modules`, `__main__.__file__`, опционально `model=`) и файлам весов и делает PUT на инференс **до** создания версии, чтобы Kappa ≥ 2.14 мог его продвинуть. На шлюзах до 2.14 маршрут отвечает 404 — отправка всё равно проходит. `attach_pipeline=False` отключает детект; `pipeline={...}` задаёт тело вручную (`source: manual`) — туда можно положить архитектуру, классы и препроцесс. Автодетект пишет только framework / имя файла весов / скрипт и **не** запускает инференс. Смесь `.pt`+`.onnx` без явного тела не угадывается.
 
 Сохранение инференса само по себе оставляет бенчмарк в статусе *Pending Inference*. Поэтому `submit_benchmark()` дополнительно вызывает `POST …/benchmarks/inferences/{benchmark_id}/{model_version_id}`, что переводит бенчмарк в *Inference Completed*. Этой привязке нужна **версия модели**, иначе сервер отвечает `404 MODEL_VERSION_NOT_FOUND`. Версия определяется по порядку:
 
@@ -158,7 +160,7 @@ HTTP (через шлюз):
 
 | Ресурс | Путь кэша |
 |---|---|
-| Оценочный набор бенчмарка | `~/cache/kappa-framework/benchmarks/{benchmark_id}/` |
+| Оценочный набор бенчмарка | Кэш ОС `kappa-framework/benchmarks/{benchmark_id}/` (старый `~/cache/…` переиспользуется, если уже полный) |
 | Файлы запуска модели | Из `model_path` или метаданных `setup_project()` |
 
 Загрузка помечается кэшированной только после распаковки всех шардов, поэтому прерванная загрузка повторяется с начала, а не остаётся неполной.

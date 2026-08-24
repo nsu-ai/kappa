@@ -39,9 +39,44 @@ const DEFAULT_ADMISSION_RETRIES: u32 = 5;
 /// Only hash artifacts up to this size by default — hashing re-reads the whole file.
 const DEFAULT_CHECKSUM_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 
+/// 6 = Prediction output (Kappa ≥ 2.14); 1–5 are the original artifact categories.
+pub const FILE_CATEGORY_PREDICTION_OUTPUT: i32 = 6;
+
+pub fn validate_file_category(category: i32) -> PyResult<()> {
+    if (1..=6).contains(&category) {
+        Ok(())
+    } else {
+        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "file_category must be 1–6 (1 Training, 2 Inference, 3 Model, 4 Data, 5 Other, 6 Prediction output)",
+        ))
+    }
+}
+
+pub fn inference_file_upload_endpoint(
+    model_id: &str,
+    inference_id: i32,
+    category: i32,
+    entity_id: Option<&str>,
+    field_name: Option<&str>,
+) -> String {
+    let mut url = format!(
+        "/model-micro-services/v2/models/inferences/files/{}/{}?file_category={}",
+        model_id, inference_id, category
+    );
+    if let Some(id) = entity_id.map(str::trim).filter(|s| !s.is_empty()) {
+        url.push_str("&entityId=");
+        url.push_str(&urlencoding::encode(id));
+    }
+    if let Some(name) = field_name.map(str::trim).filter(|s| !s.is_empty()) {
+        url.push_str("&fieldName=");
+        url.push_str(&urlencoding::encode(name));
+    }
+    url
+}
+
 /// Options for a single session upload; defaults come from [`SessionUploadOptions::default`].
 pub struct SessionUploadOptions {
-    /// 1 Training, 2 Inference, 3 Model, 4 Data, 5 Other (server default 3).
+    /// 1 Training, 2 Inference, 3 Model, 4 Data, 5 Other, 6 Prediction output (server default 3).
     pub file_category: Option<i32>,
     /// Called after each part with `(bytes_sent, total_bytes, percent)`.
     pub on_progress: Option<PyObject>,
@@ -303,12 +338,8 @@ impl ModelArtifactsApi {
                 "bytes_expected must be greater than 0",
             ));
         }
-        if let Some(category) = file_category
-            && !(1..=5).contains(&category)
-        {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "file_category must be 1–5 (1 Training, 2 Inference, 3 Model, 4 Data, 5 Other)",
-            ));
+        if let Some(category) = file_category {
+            validate_file_category(category)?;
         }
 
         let mut body = serde_json::Map::new();
@@ -916,6 +947,8 @@ impl ModelArtifactsApi {
                     Some(category),
                     false,
                     use_session,
+                    None,
+                    None,
                 )?
             };
 
@@ -1113,7 +1146,7 @@ fn state_file_path(
         model_id, inference_id, absolute, bytes, mtime
     );
     let digest = format!("{:x}", Sha256::digest(key.as_bytes()));
-    let base = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+    let base = dirs::cache_dir().or_else(|| crate::utils::cache_paths::ensure_temp_dir().ok())?;
     Some(
         base.join("kappa-apk")
             .join("uploads")
@@ -1207,6 +1240,16 @@ mod tests {
     fn missing_route_detection() {
         assert!(is_missing_route("HTTP 404 Not Found"));
         assert!(!is_missing_route("HTTP 409 PACKAGE_TOO_LARGE_FOR_ZIP"));
+    }
+
+    #[test]
+    fn file_category_six_is_prediction_output() {
+        assert!(validate_file_category(6).is_ok());
+        assert!(validate_file_category(7).is_err());
+        let url = inference_file_upload_endpoint("m", 1, 6, Some("ent-1"), Some("output_image"));
+        assert!(url.contains("file_category=6"));
+        assert!(url.contains("entityId=ent-1"));
+        assert!(url.contains("fieldName=output_image"));
     }
 
     #[test]

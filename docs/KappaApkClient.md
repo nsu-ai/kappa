@@ -36,7 +36,7 @@ Paths below are appended to `base_url`. All authenticated dataset/benchmark call
 | `list_datasets_typed(...)` | same | Returns `list[Dataset]` |
 | `filter_datasets(search?, dataset_tags?, dataset_type?, dataset_status?, publish_type?, page?, size?, order_by?, order_keyword?, query_all?, start_date?, end_date?, selected_version_id?, selected_version_no?)` | `GET …/datasets/filter` | Rich filters (defaults: page=1, size=20) |
 | `get_dataset_details(dataset_id?, dataset_name?)` | `GET …/datasets/filter` | Single `Dataset` |
-| `get_dataset_fields(dataset_id)` | `GET …/datasets/fields/{id}` | Input field schema |
+| `get_dataset_fields(dataset_id)` | `GET …/datasets/fields/{id}` | Field schema (Kappa ≥ 2.13 merges outputs) |
 
 `list_datasets` and `filter_datasets` hit the same filter endpoint with **different default pagination**. Pages are 1-based and the envelope is `{items, total, page, size, pages}`.
 
@@ -59,7 +59,8 @@ Helpers (module-level): `join_ml_tags(primary, *extras)`, `ensure_primary_ml_tag
 |---|---|
 | `add_dataset(dataset, check_tags=True)` | `POST …/datasets/new` |
 | `update_dataset(dataset_id, update)` | `PUT …/datasets/{id}` |
-| `delete_dataset(dataset_id, remark)` | `DELETE …/datasets/{id}` (soft-delete; recover via server `/datasets/recover`) |
+| `patch_dataset_tags(dataset_id, add?, remove?)` | `PATCH …/datasets/{id}/tags` (Kappa ≥ 2.13; cannot drop primary tag) |
+| `delete_dataset(dataset_id, remark)` | `DELETE …/datasets/{id}` (soft-delete; recover via server `/datasets/recover` until expiry) |
 
 `check_tags=True` (default) loads `dataset_tags_{dataset_type}` and requires the **first** tag to be predefined. Same rule for `create_model(..., check_tags=True)` with `mlModelType` / `mlModelTags`.
 
@@ -86,7 +87,8 @@ Helpers (module-level): `join_ml_tags(primary, *extras)`, `ensure_primary_ml_tag
 | `update_dataset_entity(dataset_id, entity_id, update, version_id?)` | `PUT …/datasetEntities/{id}/{entity_id}` |
 | `list_dataset_entities(dataset_id, version_id?)` | `GET …/datasetEntities/{id}` |
 | `get_dataset_entity(dataset_id, entity_id, version_id?)` | `GET …/datasetEntities/{id}/{entity_id}` |
-| `filter_dataset_entities(dataset_id, entity_name?, entity_status?, version_id?, page?, size?, order_by?, order?, entity_id?, location_id?, assignment_filter?, start_date?, end_date?)` | `GET …/datasetEntities/filter/{id}` — 1-based pages; `assignment_filter` is `"assigned"` / `"not_assigned"` |
+| `filter_dataset_entities(...)` | `GET …/datasetEntities/filter/{id}` — 1-based pages; `assignment_filter` is `"assigned"` / `"not_assigned"` |
+| `count_dataset_entities(...)` | `GET …/datasetEntities/count/{id}` — cheap count (Kappa ≥ 2.13) |
 | `delete_dataset_entities(dataset_entity_ids, remark, version_id?)` | `DELETE …/datasetEntities` |
 
 `file_paths` accepts file paths, a directory (immediate children), or `http(s)://` URLs.
@@ -118,13 +120,13 @@ Wait for `buildStatus=ready` (via `wait_for_version_build_job`) before publish/d
 
 | Method | HTTP |
 |---|---|
-| `mark_dataset_entities_labeled(dataset_id, dataset_entity_ids?, remark?, all_eligible?)` | `POST …/mark-labeled/{id}` |
+| `mark_dataset_entities_labeled(dataset_id, dataset_entity_ids?, remark?, all_eligible?)` | `POST …/mark-labeled/{id}` — poll **only if** `jobId` is present (2.11–2.12 always; 2.13 multi/`allEligible`). Kappa ≥ 2.13 one ID may be sync `200` / `422` |
 | `bulk_self_verify_dataset_entities(dataset_id, status, comment?)` | `POST …/verification/self-verify-batch/{id}` |
 | `auto_verify_dataset_entities(dataset_id)` | `POST …/verification/auto-verify/{id}` |
 | `get_bulk_mutation_job` / `wait_for_bulk_mutation_job` / `cancel_bulk_mutation_job` | `…/bulk-mutation/jobs*` |
 | `get_mark_labeled_stats` / `get_self_verify_stats` | stats GET endpoints |
 
-Start endpoints return `jobId` — poll with `BulkMutationJob`. Delete/recover/delete-files are also async jobs.
+Start endpoints usually return `jobId` — poll with `BulkMutationJob`. After wait, `job.mutation_failed()` is the Kappa ≥ 2.13 completeness signal (`status=failed` or `failed_count > 0`); `succeeded` with 0 processed remains OK on 2.11–2.12. Delete/recover/delete-files are also async jobs.
 
 ---
 
@@ -137,7 +139,7 @@ Start endpoints return `jobId` — poll with `BulkMutationJob`. Delete/recover/d
 
 `loader_type`: `"kappa"` (default) · `"pytorch"` · `"transformers"` · `"tensorflow"`
 
-Cache root: `~/cache/kappa-framework/datasets/{name}_{version}/`
+Cache root: OS cache dir (`%LOCALAPPDATA%\kappa-framework\…` on Windows, `~/.cache/kappa-framework/…` on Linux). Existing `~/cache/kappa-framework/…` downloads are still reused.
 
 ---
 
@@ -166,9 +168,11 @@ See [Benchmarks.md](Benchmarks.md).
 
 | Method | HTTP |
 |---|---|
-| `write_model_inference(model_id, predictions?, metrics?, inference_result?, artifacts?, …)` | schema → validate → `POST …/models/inferences/{model}` → artifact uploads |
+| `write_model_inference(model_id, predictions?, metrics?, inference_result?, artifacts?, …)` | schema → validate → `POST …/models/inferences/{model}` → artifact uploads → pipeline draft PUT (Kappa ≥ 2.14) |
 | `upload_model_artifacts(model_id, inference_id, paths, …)` | one upload per file, transport chosen per size |
-| `upload_model_inference_file(model_id, inference_id, file_path, file_category?, replace?, use_session?)` | `POST`/`PATCH …/models/inferences/files/{model}/{inference}` — switches to an upload session for large files |
+| `upload_model_inference_file(..., file_category?, entity_id?, field_name?)` | `POST`/`PATCH …/inferences/files/{model}/{inference}` |
+| `upload_prediction_output_file(..., entity_id, field_name)` | `file_category=6` + file-ref for `predicted` (Kappa ≥ 2.14) |
+| `detect_model_pipeline` / `put_inference_pipeline` | local detect; `PUT …/inferences/{model}/{inference}/pipeline` |
 | `upload_model_artifact_session(..., on_progress?, checksum?, resume?, max_retries?, wait_for_slot?)` | `…/upload-session` → `…/part-urls` → presigned `PUT` → `…/complete` |
 | `get_model_artifact_upload_session` / `abort_model_artifact_upload_session` | `…/upload-session/{upload_id}` |
 | `get_model_inference_artifacts_package` / `get_model_version_artifacts_package` | `GET …/package` / `…/artifacts/package` |
@@ -176,7 +180,7 @@ See [Benchmarks.md](Benchmarks.md).
 | `download_model_inference_artifacts_package(..., dest_dir)` | manifest + per-file download |
 | `download_model_inference_artifacts` / `download_model_version_artifacts` | `GET …/zip` — small packages only |
 
-`file_category`: `1` Training · `2` Inference · `3` Model · `4` Data · `5` Other. The plain upload defaults to `2`; upload sessions and the two helpers above default to `3`.
+`file_category`: `1` Training · `2` Inference · `3` Model · `4` Data · `5` Other · `6` Prediction output (Kappa ≥ 2.14, needs `entityId` + `fieldName`). The plain upload defaults to `2`; upload sessions and bulk helpers default to `3`.
 
 Oversized plain uploads are rejected with `413 USE_KAPPA_APK`, and packages past the zip ceiling refuse the zip route with `409 PACKAGE_TOO_LARGE_FOR_ZIP`. The SDK handles both: it moves large uploads onto a session automatically, and `download_model_inference_artifacts_package` fetches each file separately. Sessions need object storage enabled server-side (`503` otherwise) and allow only a couple of concurrent uploads per model (`429`), which `wait_for_slot` waits out; abort abandoned sessions to free a slot sooner.
 
@@ -188,8 +192,8 @@ Oversized plain uploads are rejected with `413 USE_KAPPA_APK`, and packages past
 written = client.write_model_inference(
     model_id,
     predictions=[
-        {"entityId": item.entity_id, "original": item.annotations,
-         "predicted": {"class_name": "pizza", "confidence": 0.98}}
+        {"entityId": item.entity_id,
+         "predicted": {"label": "pizza", "confidence": 0.98}}
     ],
     metrics={"accuracy": 0.93},
     artifacts=["./checkpoints", "./config.json"],   # files and/or directories
@@ -198,7 +202,19 @@ written = client.write_model_inference(
 print(written["inferenceId"], written["schema"]["kind"])
 ```
 
-Prediction dicts accept `entity_id` or `entityId`, and a bare label string for `predicted` is wrapped into the key the schema requires (`class_name`, `text`, `answer`, …). Pass `inference_result=…` to send a document you built yourself. A payload the schema rejects raises `ValueError` listing the failing JSON paths before anything is written.
+Prediction dicts accept `entity_id` or `entityId`. A bare `predicted` string is wrapped into the schema's single required string key (`class_name` / `text` on older templates, `label` / `output_text` on Kappa ≥ 2.14). Extra keys are kept. `original` is optional and is not used as ground truth. The platform does not rename `class_name` → `label` for you — send the key the schema lists. File-typed or multi-key `predicted` objects must be dicts (a bare string is rejected). Metrics are passed through as a dict; Kappa ≥ 2.14 accepts extra numeric names. Pass `inference_result=…` to send a document you built yourself. A payload the schema rejects raises `ValueError` listing the failing JSON paths before anything is written.
+
+On Kappa ≥ 2.14, `write_model_inference` also auto-detects a pipeline from the running program and uploaded files and PUTs it on the inference (`attach_pipeline=False` to skip). Older backends 404 that route; the inference is still created.
+
+File-typed outputs (image-to-image) need a prediction-file upload, then a file-ref in `predicted`:
+
+```python
+ref = client.upload_prediction_output_file(
+    model_id, inference_id, "pred.png", entity_id="e1", field_name="output_image",
+    content_type="image/png",
+)
+# ref → {"artifactId": "…", "fileName": "pred.png", "contentType": "image/png"}
+```
 
 ### Large weights (KappaApk-only path)
 

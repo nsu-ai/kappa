@@ -26,6 +26,10 @@ pub struct Benchmark {
     pub user_id: i32,
     #[serde(default)]
     pub report_id: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expert_score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entities_reviewed: Option<i32>,
     #[serde(default)]
     pub created_on: Option<String>,
     #[serde(default)]

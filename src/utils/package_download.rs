@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use std::fs;
 use std::path::Path;
 
+use crate::utils::cache_paths;
 use crate::utils::zip_utils;
 
 /// How a manifest wants its payload fetched.
@@ -104,10 +105,11 @@ where
 {
     zip_utils::prepare_cache_dir(data_dir)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
-    let shards_tmp = data_dir.join(".shards_tmp");
-    fs::create_dir_all(&shards_tmp).map_err(|e| {
+    let shards_tmp = data_dir.join(cache_paths::SHARDS_TMP_DIR);
+    zip_utils::create_dir_all_retry(&shards_tmp).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-            "Failed to create shard temp dir: {}",
+            "Failed to create shard temp dir {}: {}",
+            shards_tmp.display(),
             e
         ))
     })?;
@@ -151,6 +153,10 @@ where
 /// The web client treats missing manifests and permission failures on the direct dataset
 /// route as a signal to retry through the benchmark proxy.
 pub fn is_fallback_error(message: &str) -> bool {
+    // Private org-only versions are a hard deny — do not retry via the benchmark proxy.
+    if message.contains("PRIVATE_VERSION_ORG_ONLY") {
+        return false;
+    }
     let lower = message.to_ascii_lowercase();
     message.contains("404")
         || message.contains("403")
@@ -246,6 +252,9 @@ mod tests {
         assert!(is_fallback_error("HTTP 403 Forbidden"));
         assert!(is_fallback_error("Request failed: not found"));
         assert!(!is_fallback_error("HTTP 500 server error"));
+        assert!(!is_fallback_error(
+            "HTTP 403: PRIVATE_VERSION_ORG_ONLY"
+        ));
         assert!(is_pending_approval_error("HTTP 208 YOUR_REQUEST_IS_PENDING"));
     }
 }

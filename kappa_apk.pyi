@@ -148,6 +148,14 @@ class BulkMutationJob:
     def error_detail(self) -> Optional[str]: ...
     @property
     def can_cancel(self) -> bool: ...
+    @property
+    def result_summary(self) -> dict[str, Any]: ...
+    def mutation_failed(self) -> bool:
+        """True when Kappa ≥ 2.13 reports ``status=failed`` or ``failed_count > 0``.
+
+        A 2.11–2.12 job that finished ``succeeded`` with 0 processed returns False.
+        """
+        ...
     def is_terminal(self) -> bool: ...
     def is_wait_complete(self) -> bool: ...
     def as_dict(self) -> dict[str, Any]: ...
@@ -445,8 +453,9 @@ class Benchmarks:
         (``GET /data-micro-services/v2/datasets/versions/{id}/{versionNo}/package``), then
         the benchmark proxy (``GET .../benchmarks/datasets/{benchmark_id}/package``) when
         only ``benchmark.read`` is held. Either path uses the legacy single zip when the
-        manifest reports one. Extracted to
-        ``~/cache/kappa-framework/benchmarks/{benchmark_id}/``, so a second call with the
+        manifest reports one. Extracted to the OS cache
+        (``kappa-framework/benchmarks/{benchmark_id}/``); a complete legacy
+        ``~/cache/kappa-framework/…`` download is reused, so a second call with the
         same benchmark skips the download entirely.
 
         Raises:
@@ -478,8 +487,11 @@ class Benchmarks:
         """Build an in-memory benchmark result from predictions and optional metrics.
 
         Args:
-            predictions: A list of dicts, each with ``entity_id``, ``original``,
-                and ``predicted`` keys.
+            predictions: A list of dicts, each with ``entity_id`` / ``entityId``
+                and ``predicted``. Required keys inside ``predicted`` follow the
+                model's inference schema (``class_name`` / ``text`` on older
+                templates, ``label`` / ``output_text`` on Kappa ≥ 2.14).
+                ``original`` is optional and is not used as ground truth.
             metrics: Optional dict mapping metric names to scalar or aggregate
                 values (e.g. ``{"accuracy": 0.95, "f1": 0.92}``).
             model_path: Path to a directory containing model files.  Their
@@ -506,6 +518,11 @@ class Benchmarks:
         upload_artifacts: bool = False,
         artifact_paths: Optional[list[str]] = None,
         on_progress: Optional[Any] = None,
+        attach_pipeline: bool = True,
+        pipeline: Optional[Any] = None,
+        pipeline_type: Optional[int] = None,
+        model: Optional[Any] = None,
+        entrypoint: Optional[str] = None,
     ) -> dict[str, Any]:
         """Submit the saved benchmark result to the model service.
 
@@ -524,6 +541,11 @@ class Benchmarks:
         from :meth:`save_benchmark`. Files past the server's sync cap take a resumable
         multipart session, so multi-GB weights work here. *on_progress* receives
         ``(file_name, bytes_sent, total_bytes, percent)``.
+
+        After artifacts, a pipeline draft is auto-detected from the running program and
+        PUT on the inference **before** the version is created (Kappa ≥ 2.14; missing
+        route is skipped). *attach_pipeline=False* skips; *pipeline=* sends an explicit
+        body. *pipeline_type* defaults to 2 (benchmark-runner).
 
         Example:
             >>> bm.save_benchmark(predictions, metrics, model_path="./model")
@@ -581,12 +603,17 @@ class NewDataset:
         ...
 
 class UpdateDatasetRequest:
-    """Request model for updating dataset metadata (``PUT /datasets/{dataset_id}``)."""
+    """Request model for updating dataset metadata (``PUT /datasets/{dataset_id}``).
+
+    Omit ``dataset_short_info`` to leave the existing blurb unchanged (Kappa ≥ 2.13).
+    Max length 10 000.
+    """
 
     dataset_name: Optional[str]
     dataset_status: Optional[int]
     remark: Optional[str]
     dataset_verification_type: Optional[int]
+    dataset_short_info: Optional[str]
 
     def __init__(
         self,
@@ -594,6 +621,7 @@ class UpdateDatasetRequest:
         dataset_status: Optional[int] = None,
         remark: Optional[str] = None,
         dataset_verification_type: Optional[int] = None,
+        dataset_short_info: Optional[str] = None,
     ) -> None: ...
 
     def to_api_json(self) -> str: ...
@@ -869,7 +897,10 @@ class KappaApkClient:
     ) -> DatasetDownloadDetails:
         """Download and extract the legacy single-zip version archive to the local cache.
 
-        The archive is cached at ``~/cache/kappa-framework/datasets/{name}_{ver}/``.
+        The archive is cached under the OS cache dir
+        (``%LOCALAPPDATA%/kappa-framework/datasets/{name}_{ver}/`` on Windows,
+        ``~/.cache/kappa-framework/datasets/…`` on Linux). A complete legacy
+        ``~/cache/kappa-framework/…`` download is reused.
         A second call with the same parameters skips the download.
 
         On Kappa ≥ 2.11 this zip only exists for single-shard versions; use
@@ -955,7 +986,22 @@ class KappaApkClient:
         ...
 
     def update_dataset(self, dataset_id: int, update: Any) -> dict[str, Any]:
-        """Update dataset metadata (accepts :class:`UpdateDatasetRequest` or a plain dict)."""
+        """Update dataset metadata (accepts :class:`UpdateDatasetRequest` or a plain dict).
+
+        Kappa ≥ 2.13: ``datasetShortInfo`` (max 10 000); omit to leave the blurb unchanged.
+        """
+        ...
+
+    def patch_dataset_tags(
+        self,
+        dataset_id: int,
+        add: Optional[list[str]] = None,
+        remove: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        """Add/remove non-primary tags (``PATCH …/datasets/{id}/tags``, Kappa ≥ 2.13).
+
+        Cannot drop the primary ML tag (``409 PRIMARY_TAG_IMMUTABLE``). Custom tags allowed.
+        """
         ...
 
     def add_dataset_entity(
@@ -1028,7 +1074,11 @@ class KappaApkClient:
         ...
 
     def get_dataset_fields(self, dataset_id: int) -> dict[str, Any]:
-        """Return the field/schema definition for a dataset."""
+        """Return the field/schema definition for a dataset.
+
+        Kappa ≥ 2.13 merges ``dataset_outputs`` (strictest ``nullable``). Create still
+        allows missing outputs; Labelled / Verified require them.
+        """
         ...
 
     def delete_dataset(
@@ -1038,12 +1088,16 @@ class KappaApkClient:
     ) -> dict[str, Any]:
         """Soft-delete a dataset (sets ``datasetStatus = 0``).
 
-        Recover with :meth:`recover_datasets`.
+        Recover with :meth:`recover_datasets` while still inside the window.
+        Kappa ≥ 2.13: after expiry the row is status **5** and recover is ``409``.
         """
         ...
 
     def recover_datasets(self, dataset_ids: list[int]) -> dict[str, Any]:
-        """Recover soft-deleted datasets (``POST .../datasets/recover``)."""
+        """Recover soft-deleted datasets (``POST .../datasets/recover``).
+
+        Kappa ≥ 2.13: ``409 DATASET_PERMANENTLY_DELETED`` after the expiry window.
+        """
         ...
 
     def check_dataset_name_availability(self, dataset_name: str) -> dict[str, Any]:
@@ -1121,6 +1175,24 @@ class KappaApkClient:
         dataset filters use *order_keyword*. *assignment_filter* is ``"assigned"`` or
         ``"not_assigned"`` (default). There is no server-side split filter — read
         ``dsEntityInfo.split`` from each item.
+        """
+        ...
+
+    def count_dataset_entities(
+        self,
+        dataset_id: int,
+        entity_name: Optional[str] = None,
+        entity_status: Optional[int] = None,
+        version_id: Optional[int] = None,
+        entity_id: Optional[str] = None,
+        location_id: Optional[int] = None,
+        assignment_filter: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Cheap filtered count (``GET …/datasetEntities/count/{id}``, Kappa ≥ 2.13).
+
+        Same filters as :meth:`filter_dataset_entities` without pagination. Returns ``{total: N}``.
         """
         ...
 
@@ -1214,10 +1286,12 @@ class KappaApkClient:
         remark: Optional[str] = None,
         all_eligible: Optional[bool] = None,
     ) -> dict[str, Any]:
-        """Enqueue mark-labeled (pass IDs or ``all_eligible=True``). Returns ``jobId``.
+        """Mark default-algorithm entities as labeled (IDs or ``all_eligible=True``).
 
-        Inline ID lists are capped server-side (default 5000, HTTP 413); use
-        ``all_eligible=True`` for whole-dataset runs.
+        Poll with :meth:`wait_for_bulk_mutation_job` **only if** the dict has ``jobId``
+        (2.11–2.12 any size; 2.13 multi-ID / ``allEligible``). Kappa ≥ 2.13 with one ID
+        may return a sync ``200`` result (no ``jobId``) or ``422`` completeness.
+        Inline ID lists are capped server-side (default 5000, HTTP 413).
         """
         ...
 
@@ -1250,7 +1324,8 @@ class KappaApkClient:
     ) -> BulkMutationJob:
         """Poll until mutation job is terminal (default timeout 1 hour).
 
-        *on_progress(job)* is called each poll.
+        *on_progress(job)* is called each poll. ``succeeded`` with 0 processed is still
+        OK on Kappa 2.11–2.12. On ≥ 2.13 use :meth:`BulkMutationJob.mutation_failed`.
         """
         ...
 
@@ -1393,14 +1468,25 @@ class KappaApkClient:
         file_category: Optional[int] = None,
         replace: bool = False,
         use_session: Optional[bool] = None,
+        entity_id: Optional[str] = None,
+        field_name: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Upload inference artifact (*file_category* 1–5; default 2 Inference).
+        """Upload inference artifact (*file_category* 1–6; default 2 Inference).
 
-        Large files use a multipart upload session automatically: pass ``use_session=True``
-        to force it, ``False`` to insist on the plain upload (which the server rejects with
-        ``413 USE_KAPPA_APK`` past its sync cap). Sessions upsert by file name, so *replace*
-        has no effect on them.
+        Category 6 is prediction output (Kappa ≥ 2.14) and requires *entity_id* and
+        *field_name*. Large files use a multipart upload session automatically.
         """
+        ...
+    def upload_prediction_output_file(
+        self,
+        model_id: str,
+        inference_id: int,
+        file_path: str,
+        entity_id: str,
+        field_name: str,
+        content_type: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Upload ``file_category=6`` and return ``{artifactId, fileName, contentType}``."""
         ...
     def write_model_inference(
         self,
@@ -1415,48 +1501,66 @@ class KappaApkClient:
         use_session: Optional[bool] = None,
         skip_existing: bool = True,
         on_progress: Optional[Any] = None,
+        attach_pipeline: bool = True,
+        pipeline: Optional[Any] = None,
+        pipeline_type: Optional[int] = None,
+        model: Optional[Any] = None,
+        entrypoint: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
     ) -> dict[str, Any]:
         """Write an inference result and its artifacts in one call, per the model's schema.
 
-        Reads the model's effective inference schema, shapes *predictions* / *metrics* into
-        the ``results.predictions[]`` document it requires, validates the payload
-        server-side, creates the inference and uploads *artifacts* — a path, a list of
-        paths, or directories of weight shards. Files past the sync cap take a resumable
-        multipart session; artifacts already attached with the same name and size are
-        skipped when *skip_existing*.
+        A bare ``predicted`` string is wrapped into the schema's single required string
+        key (``class_name`` / ``text`` on older templates, ``label`` / ``output_text`` on
+        Kappa ≥ 2.14). Extra keys are kept. ``original`` is optional.
 
-        Pass *inference_result* to send a document you built yourself; *predictions* and
-        *metrics* are then ignored.
-
-        Prediction dicts accept ``entity_id`` or ``entityId``, and a bare label string for
-        ``predicted`` is wrapped into the key the schema requires (e.g. ``class_name``).
-
-        Args:
-            artifacts: File path, directory, or list of either.
-            benchmark_id: Written into the result document when the run is a benchmark.
-            file_category: 1 Training, 2 Inference, 3 Model (default here), 4 Data, 5 Other.
-            validate: Validate against the schema before creating the inference.
-            use_session: Force (``True``) or forbid (``False``) upload sessions; ``None``
-                picks per file size.
-            on_progress: Called as ``(file_name, bytes_sent, total_bytes, percent)``.
+        After artifacts, auto-detects a pipeline draft and PUTs it (Kappa ≥ 2.14; 404 skipped).
 
         Returns:
             ``{"modelId", "inferenceId", "schema", "validation", "artifacts",
-            "inferenceResult"}``.
-
-        Raises:
-            ValueError: The result does not match the model's inference schema.
+            "inferenceResult", "pipeline"}``.
 
         Example:
             >>> written = client.write_model_inference(
             ...     model_id,
-            ...     predictions=[{"entityId": "e1", "predicted": {"class_name": "pizza"}}],
+            ...     predictions=[{"entityId": "e1", "predicted": {"label": "pizza"}}],
             ...     metrics={"accuracy": 0.93},
             ...     artifacts=["./checkpoints", "./config.json"],
             ... )
             >>> written["inferenceId"]
-            12
         """
+        ...
+    def detect_model_pipeline(
+        self,
+        artifact_paths: Optional[Any] = None,
+        model: Optional[Any] = None,
+        entrypoint: Optional[str] = None,
+        pipeline_type: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Detect a pipeline draft from the running program and local files (no HTTP).
+
+        Returns ``{"attached", "reason", "candidates", "draft"}``. Mixed frameworks
+        (e.g. ``.pt`` + ``.onnx``) do not guess: ``draft`` is ``None``.
+        """
+        ...
+    def put_inference_pipeline(
+        self,
+        model_id: str,
+        inference_id: int,
+        pipeline: Any,
+    ) -> dict[str, Any]:
+        """``PUT …/inferences/{modelId}/{inferenceId}/pipeline`` (Kappa ≥ 2.14).
+
+        Older backends 404; ``write_model_inference`` / ``submit_benchmark`` skip that.
+        """
+        ...
+    def prediction_file_ref(
+        self,
+        upload: Any,
+        file_name: Optional[str] = None,
+        content_type: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Build ``{artifactId, fileName, contentType}`` from an upload response."""
         ...
     def upload_model_artifacts(
         self,

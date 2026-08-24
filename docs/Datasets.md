@@ -53,7 +53,10 @@ result = client.add_dataset(NewDataset(
 ))
 
 client.update_dataset(42, UpdateDatasetRequest(dataset_name="MyDataset-v2", remark="Renamed"))
-client.delete_dataset(42, remark="Obsolete")   # soft-delete
+# Kappa ≥ 2.13: edit the blurb (omit dataset_short_info to leave it). Max 10 000 chars.
+client.update_dataset(42, UpdateDatasetRequest(dataset_short_info="Image classification — pizza vs not"))
+client.patch_dataset_tags(42, add=["my-batch"], remove=["old-tag"])  # cannot drop the primary ML tag
+client.delete_dataset(42, remark="Obsolete")   # soft-delete; recover until expiry (then status 5)
 ```
 
 **Tag rules (backend + FE):** catalog is `GET …/system/config/dataset_tags_{dataset_type}` (same list for model create). Backend requires ≥1 predefined ML tag (`ml_tags_config_fields_info` after normalizing display labels). Put that predefined tag **first** — Label Studio / CVAT use the first predefined tag in order. Custom tags (`torchvision`, project names, …) may follow.
@@ -110,7 +113,9 @@ client.delete_dataset_entities(["uuid-1", "uuid-2"], remark="Duplicates removed"
 
 Entity pages are **1-based** like dataset pages, and sort direction uses `order` (not `order_keyword`). You can also pass `entity_id`, `location_id`, `start_date` and `end_date`. There is no server-side split filter — read `dsEntityInfo.split` from each item.
 
-Pass `file_category="input"|"output"` and optional `split="train"|"validation"|"test"` on create/update. Single entity files are capped at **2 GB** each.
+Pass `file_category="input"|"output"` and optional `split="train"|"validation"|"test"` on create/update. Single entity files are capped at **2 GB** each. `entity_source` is 3–100 characters (Kappa ≥ 2.13; older backends truncated at 50).
+
+On Kappa ≥ 2.13, create / bulk **do not** require output JSON fields or output files (`label`, `output_text`, …). Those are gated when you mark labeled or self-verify Pass. `get_dataset_fields` merges `dataset_outputs` (strictest `nullable`). Tabular single create/update uses the same schema validator as bulk (`422 COLUMN_REQUIRED:{col}`). Dataset names are unique **case-insensitively**; a permanently deleted (status **5**) name may be reused.
 
 ---
 
@@ -181,6 +186,16 @@ HTTP **403** raises `PermissionError` with a hint to inspect permissions. **429*
 
 Self-verify, auto-verify, mark-labeled, delete/recover/delete-files enqueue an async **bulk-mutation** job (`202` + `jobId`). Poll with `BulkMutationJob` helpers. Only one active mutation per dataset (HTTP **409** if busy).
 
+**Mark-labeled envelopes** — poll **only if** `jobId` is present (do not assume one ID is sync):
+
+| Response | When |
+|---|---|
+| `202` + `jobId` | Kappa 2.11–2.12 (any size); Kappa ≥ 2.13 with several IDs or `all_eligible=True` |
+| `200` without `jobId` (`processed` / `succeeded` / `failures`) | Kappa ≥ 2.13 **one** entity ID (sync) |
+| `422` `Cannot mark labeling done; …` | Kappa ≥ 2.13 one ID, missing required outputs |
+
+**Job outcome** — `wait_for_bulk_mutation_job` still returns on `succeeded` / `failed` / `cancelled`. On 2.11–2.12, `succeeded` with 0 processed is a valid no-op. On ≥ 2.13, completeness misses set `failed_count` and may finish `status=failed`. Use `job.mutation_failed()` for the 2.13 signal without treating the old 0/1 job as an error.
+
 ```python
 stats = client.get_mark_labeled_stats(42)
 start = client.mark_dataset_entities_labeled(42, all_eligible=True, remark="batch")
@@ -188,11 +203,19 @@ start = client.mark_dataset_entities_labeled(42, all_eligible=True, remark="batc
 # Inline ID lists are capped at BULK_MUTATION_INLINE_ID_LIMIT (default 5000) → HTTP 413.
 # For whole-dataset runs use all_eligible=True.
 
-def on_mut(job):
-    print(job.job_type, job.status, job.percent, job.processed_count, job.total_count)
+job_id = start.get("jobId") if isinstance(start, dict) else None
+if job_id:
+    def on_mut(job):
+        print(job.job_type, job.status, job.percent, job.processed_count, job.total_count,
+              job.succeeded_count, job.skipped_count, job.failed_count)
 
-final = client.wait_for_bulk_mutation_job(42, start["jobId"], on_progress=on_mut)
-print(final.status, final.succeeded_count, final.error_detail)
+    final = client.wait_for_bulk_mutation_job(42, job_id, on_progress=on_mut)
+    print(final.status, final.succeeded_count, final.error_detail)
+    if final.mutation_failed():
+        raise RuntimeError(final.error_detail or final.status)
+else:
+    print("sync mark-labeled:", start)
+
 # Default timeout is 1 hour; raise timeout_secs for very large datasets.
 
 # Self-verify (status 1=Pass, 3=Needs Modification + comment) / auto-verify
@@ -200,9 +223,10 @@ client.bulk_self_verify_dataset_entities(42, status=1)
 client.auto_verify_dataset_entities(42)
 
 # Delete / recover / delete-files also return jobId — wait the same way
+# count = client.count_dataset_entities(42, entity_status=3)  # Kappa ≥ 2.13
 ```
 
-Helpers: `get_bulk_mutation_job`, `list_bulk_mutation_jobs`, `cancel_bulk_mutation_job`, `get_self_verify_stats`.
+Helpers: `get_bulk_mutation_job`, `list_bulk_mutation_jobs`, `cancel_bulk_mutation_job`, `get_self_verify_stats`, `count_dataset_entities`.
 
 Full script: [`code_examples/bulk_mutation_and_version_build.py`](../code_examples/bulk_mutation_and_version_build.py).
 
@@ -237,7 +261,7 @@ Helpers: `get_version_build_job`, `retry_version_build_job`, `refresh_dataset_ve
 
 Use `download_dataset_version_package` — it reads the package manifest and pulls shards, falling back to the legacy single zip when the backend has no package (pre-2.11 or single-shard builds).
 
-Archives download to `~/cache/kappa-framework/datasets/{dataset_name}_{version_no}/`. Repeat calls skip re-download if the cache directory exists.
+Archives download to the OS cache (`%LOCALAPPDATA%\kappa-framework\datasets\…` on Windows, `~/.cache/kappa-framework/datasets/…` on Linux). An existing `~/cache/kappa-framework/…` tree is reused if it is already complete. Repeat calls skip re-download when the cache marker is present.
 
 ```python
 # Manifest + shards, with legacy fallback
@@ -253,6 +277,8 @@ info = client.download_dataset_version_archive(dataset_name="MyDS", version_no="
 On Kappa ≥ 2.11 the backend only keeps the single zip when a version fits in one shard (default 2 GB / 50 000 files), so large versions **must** use the package path.
 
 Publish/download before `buildStatus=ready` → HTTP **409** `VERSION_ARCHIVE_NOT_READY`.
+
+Private versions (`publish_type=1`): non-org callers get **403** `PRIVATE_VERSION_ORG_ONLY` (“This version is private to the owning organization.”).
 
 Zip extraction validates paths (zip-slip protection via prefix check on extract paths).
 

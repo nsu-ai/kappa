@@ -4,6 +4,9 @@
 use std::fs;
 use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
+
+use crate::utils::cache_paths;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
@@ -29,9 +32,27 @@ pub fn mark_cache_complete(dir: &Path) -> std::io::Result<()> {
 /// Remove incomplete cache trees so a failed prior download can be retried cleanly.
 pub fn prepare_cache_dir(dir: &Path) -> std::io::Result<()> {
     if dir.exists() && !cache_is_complete(dir) {
-        fs::remove_dir_all(dir)?;
+        let _ = fs::remove_dir_all(dir);
     }
-    fs::create_dir_all(dir)
+    create_dir_all_retry(dir)
+}
+
+/// `create_dir_all` with a short retry — Windows often keeps a deleted folder locked
+/// for a few milliseconds (AV / Explorer), so the next create fails with "tmp path".
+pub fn create_dir_all_retry(dir: &Path) -> std::io::Result<()> {
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..8 {
+        match fs::create_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                std::thread::sleep(Duration::from_millis(20 * (attempt + 1)));
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::other("failed to create directory")
+    }))
 }
 
 /// Resolve a zip entry path under `base`, rejecting traversal (`..`, absolute paths).
@@ -55,9 +76,7 @@ fn resolve_zip_entry_path(base: &Path, entry_name: &str) -> Result<PathBuf, Stri
         }
     }
 
-    if let Ok(canonical_base) = base.canonicalize()
-        && !out.starts_with(&canonical_base)
-    {
+    if !cache_paths::is_same_or_subdir(&out, base) {
         return Err(format!(
             "Zip entry '{}' would escape the extraction directory",
             entry_name
@@ -72,7 +91,7 @@ pub fn extract_zip_archive<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     dest_dir: &Path,
 ) -> Result<(), String> {
-    fs::create_dir_all(dest_dir)
+    create_dir_all_retry(dest_dir)
         .map_err(|e| format!("Failed to create extraction directory: {}", e))?;
 
     for i in 0..archive.len() {
@@ -82,13 +101,13 @@ pub fn extract_zip_archive<R: Read + Seek>(
         let outpath = resolve_zip_entry_path(dest_dir, entry.name())?;
 
         if entry.name().ends_with('/') {
-            fs::create_dir_all(&outpath)
+            create_dir_all_retry(&outpath)
                 .map_err(|e| format!("Failed to create directory: {}", e))?;
         } else {
             if let Some(parent) = outpath.parent()
                 && !parent.exists()
             {
-                fs::create_dir_all(parent)
+                create_dir_all_retry(parent)
                     .map_err(|e| format!("Failed to create parent directory: {}", e))?;
             }
             let mut outfile = fs::File::create(&outpath)
@@ -175,7 +194,7 @@ pub fn zip_directory(source_dir: &Path, output_path: Option<PathBuf>) -> ZipResu
     let zip_path = match output_path {
         Some(path) => path,
         None => {
-            let temp_dir = std::env::temp_dir();
+            let temp_dir = cache_paths::ensure_temp_dir()?;
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -242,7 +261,7 @@ pub fn zip_file(file_path: &Path, output_path: Option<PathBuf>) -> ZipResult<Pat
     let zip_path = match output_path {
         Some(path) => path,
         None => {
-            let temp_dir = std::env::temp_dir();
+            let temp_dir = cache_paths::ensure_temp_dir()?;
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

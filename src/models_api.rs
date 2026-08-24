@@ -326,6 +326,26 @@ impl ModelsApi {
         )
     }
 
+    /// `PUT /models/inferences/{modelId}/{inferenceId}/pipeline` — draft on the inference
+    /// (Kappa ≥ 2.14). Older backends 404; callers should skip.
+    pub fn put_inference_pipeline<T: ApiClient>(
+        client: &T,
+        model_id: &str,
+        inference_id: i32,
+        body_json: String,
+    ) -> PyResult<PyObject> {
+        let endpoint = format!(
+            "/model-micro-services/v2/models/inferences/{}/{}/pipeline",
+            model_id, inference_id
+        );
+        client.make_request(
+            "PUT".to_string(),
+            endpoint,
+            Some(body_json),
+            Some(client.require_token()?),
+        )
+    }
+
     pub fn delete_model_pipeline<T: ApiClient>(
         client: &T,
         model_id: &str,
@@ -364,12 +384,14 @@ impl ModelsApi {
 
     /// Upload or replace an inference artifact file.
     ///
-    /// `file_category`: 1 Training, 2 Inference (default), 3 Model, 4 Data, 5 Other.
+    /// `file_category`: 1 Training, 2 Inference (default), 3 Model, 4 Data, 5 Other,
+    /// 6 Prediction output (Kappa ≥ 2.14; pass `entity_id` + `field_name`).
     /// `replace`: when true uses PATCH, otherwise POST.
     /// `use_session`: `None` picks the transport automatically — a multipart upload session
     /// for files past the server's sync cap, otherwise the plain multipart POST/PATCH with a
     /// session retry if the server rejects the size (`413 USE_KAPPA_APK`). Sessions always
     /// upsert by file name, so `replace` does not apply to them.
+    #[allow(clippy::too_many_arguments)]
     pub fn upload_model_inference_file<T: ApiClient>(
         client: &T,
         model_id: &str,
@@ -378,11 +400,17 @@ impl ModelsApi {
         file_category: Option<i32>,
         replace: bool,
         use_session: Option<bool>,
+        entity_id: Option<&str>,
+        field_name: Option<&str>,
     ) -> PyResult<PyObject> {
         let category = file_category.unwrap_or(2);
-        if !(1..=5).contains(&category) {
+        crate::model_artifacts::validate_file_category(category)?;
+        if category == crate::model_artifacts::FILE_CATEGORY_PREDICTION_OUTPUT
+            && (entity_id.map(str::trim).unwrap_or("").is_empty()
+                || field_name.map(str::trim).unwrap_or("").is_empty())
+        {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "file_category must be 1–5 (1 Training, 2 Inference, 3 Model, 4 Data, 5 Other)",
+                "file_category=6 (prediction output) requires entity_id and field_name",
             ));
         }
         let byte_len = std::fs::metadata(file_path)
@@ -422,9 +450,12 @@ impl ModelsApi {
             .and_then(|s| s.to_str())
             .unwrap_or("artifact.bin")
             .to_string();
-        let endpoint = format!(
-            "/model-micro-services/v2/models/inferences/files/{}/{}?file_category={}",
-            model_id, inference_id, category
+        let endpoint = crate::model_artifacts::inference_file_upload_endpoint(
+            model_id,
+            inference_id,
+            category,
+            entity_id,
+            field_name,
         );
         let method = if replace { "PATCH" } else { "POST" };
         let result = client.submit_named_file(

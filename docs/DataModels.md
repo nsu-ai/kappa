@@ -19,7 +19,7 @@ Dataset metadata from listing / filter / lookup.
 | `dataset_type` | `int` | 1 Vision · 2 Text · 3 Audio |
 | `dataset_type_interp` | `str` | Human-readable type |
 | `dataset_short_info` | `str` | |
-| `dataset_status` | `int` | |
+| `dataset_status` | `int` | 0 Deactive (soft-deleted, recoverable until expiry) · 1 Active · 2 New · 3 Under Development · 4 Upgrading · **5 Permanently deleted** (Kappa ≥ 2.13; entity files purged, version archives kept) |
 | `dataset_status_interp` | `str` | |
 | `dataset_tags` | `str` | Comma-separated. **First** tag must be a predefined ML tag for `dataset_type` (from `dataset_tags_{type}`); custom tags may follow |
 | `publish_type` | `int` | 0 Not Published · 1 Private · 2 Open Source · 3 Public on Demand · 4 Purchase |
@@ -73,6 +73,8 @@ file.file               # str — absolute path on disk
 
 Used in benchmark submissions. See [Benchmarks.md](Benchmarks.md).
 
+`Prediction.original` is optional and omitted when unset. Required keys live under `predicted` and follow the model's inference schema (`class_name` / `text` on older templates, dataset outputs such as `label` / `output_text` on Kappa ≥ 2.14). `Benchmark` GET JSON may include `expertScore` and `entitiesReviewed` when the backend sends them.
+
 ---
 
 ## Request bodies (mutable)
@@ -80,7 +82,7 @@ Used in benchmark submissions. See [Benchmarks.md](Benchmarks.md).
 | Class | Use |
 |---|---|
 | `NewDataset` | `add_dataset` |
-| `UpdateDatasetRequest` | `update_dataset` |
+| `UpdateDatasetRequest` | `update_dataset` — optional `dataset_short_info` (max 10 000; omit = leave unchanged, Kappa ≥ 2.13) |
 | `NewDatasetEntity` | `add_dataset_entity` |
 | `UpdateDatasetEntity` | `update_dataset_entity` |
 | `UpdateDatasetLabel` | `update_dataset_label` |
@@ -126,6 +128,8 @@ client.add_dataset_entity(42, entity, file_paths=["/data/img.jpg"])
 |---|---|
 | `KappaDataset` | In-memory dataset (`__len__`, `__getitem__`) |
 | `KappaDataLoader` | Batch iterator with epoch reshuffle |
+| `BulkMutationJob` | Poll snapshot for mark-labeled / self-verify / delete / recover. `mutation_failed()` is the Kappa ≥ 2.13 completeness signal; `succeeded` + 0 processed remains OK on 2.11–2.12 |
+| `BulkUploadJob` / `VersionBuildJob` | Bulk-upload and version-archive build poll snapshots |
 | `Benchmarks` | Returned by `load_benchmark()` — not a top-level import |
 | `BenchmarkVerification` | Standalone verification helper |
 | `DataLoaderHelper` | Static utilities (`peek_batch`, TF signature inference) |

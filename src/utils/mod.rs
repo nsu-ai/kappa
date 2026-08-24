@@ -1,6 +1,7 @@
 // Copyright 2025 Kappa-Apk @nsu.ru
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod cache_paths;
 pub mod file_utils;
 pub mod git_utils;
 pub mod metric_utils;

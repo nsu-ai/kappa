@@ -36,7 +36,7 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 | `list_datasets_typed(...)` | то же | Возвращает `list[Dataset]` |
 | `filter_datasets(search?, dataset_tags?, dataset_type?, dataset_status?, publish_type?, page?, size?, order_by?, order_keyword?, query_all?, start_date?, end_date?, selected_version_id?, selected_version_no?)` | `GET …/datasets/filter` | Расширенные фильтры (по умолчанию: page=1, size=20) |
 | `get_dataset_details(dataset_id?, dataset_name?)` | `GET …/datasets/filter` | Один `Dataset` |
-| `get_dataset_fields(dataset_id)` | `GET …/datasets/fields/{id}` | Схема полей ввода |
+| `get_dataset_fields(dataset_id)` | `GET …/datasets/fields/{id}` | Схема полей (на Kappa ≥ 2.13 сливаются outputs) |
 
 `list_datasets` и `filter_datasets` обращаются к одному endpoint фильтрации с **разными значениями пагинации по умолчанию**. Нумерация страниц начинается с 1, ответ имеет вид `{items, total, page, size, pages}`.
 
@@ -63,7 +63,8 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 |---|---|
 | `add_dataset(dataset, check_tags=True)` | `POST …/datasets/new` |
 | `update_dataset(dataset_id, update)` | `PUT …/datasets/{id}` |
-| `delete_dataset(dataset_id, remark)` | `DELETE …/datasets/{id}` (мягкое удаление; восстановление через `/datasets/recover` на сервере) |
+| `patch_dataset_tags(dataset_id, add?, remove?)` | `PATCH …/datasets/{id}/tags` (Kappa ≥ 2.13) |
+| `delete_dataset(dataset_id, remark)` | `DELETE …/datasets/{id}` (мягкое удаление; восстановление через `/datasets/recover` до истечения срока) |
 
 `check_tags=True` (по умолчанию) требует, чтобы **первый** тег был предопределённым для типа. То же для `create_model(..., check_tags=True)`.
 
@@ -90,7 +91,8 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 | `update_dataset_entity(dataset_id, entity_id, update, version_id?)` | `PUT …/datasetEntities/{id}/{entity_id}` |
 | `list_dataset_entities(dataset_id, version_id?)` | `GET …/datasetEntities/{id}` |
 | `get_dataset_entity(dataset_id, entity_id, version_id?)` | `GET …/datasetEntities/{id}/{entity_id}` |
-| `filter_dataset_entities(dataset_id, entity_name?, entity_status?, version_id?, page?, size?, order_by?, order?, entity_id?, location_id?, assignment_filter?, start_date?, end_date?)` | `GET …/datasetEntities/filter/{id}` — страницы с 1; `assignment_filter` — `"assigned"` / `"not_assigned"` |
+| `filter_dataset_entities(...)` | `GET …/datasetEntities/filter/{id}` — страницы с 1; `assignment_filter` — `"assigned"` / `"not_assigned"` |
+| `count_dataset_entities(...)` | `GET …/datasetEntities/count/{id}` — дешёвый count (Kappa ≥ 2.13) |
 | `delete_dataset_entities(dataset_entity_ids, remark, version_id?)` | `DELETE …/datasetEntities` |
 
 `file_paths` принимает пути к файлам, каталог (непосредственные дочерние элементы) или URL `http(s)://`.
@@ -120,9 +122,11 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 
 | Метод | HTTP |
 |---|---|
-| `mark_dataset_entities_labeled(..., all_eligible?)` | `POST …/mark-labeled/{id}` |
+| `mark_dataset_entities_labeled(..., all_eligible?)` | `POST …/mark-labeled/{id}` — опрос **только при** `jobId` |
 | `bulk_self_verify_dataset_entities` / `auto_verify_dataset_entities` | verification endpoints |
 | `wait_for_bulk_mutation_job` / `BulkMutationJob` | `…/bulk-mutation/jobs*` |
+
+После wait: `job.mutation_failed()` — сигнал полноты на Kappa ≥ 2.13; `succeeded` с 0 processed остаётся OK на 2.11–2.12.
 
 ---
 
@@ -135,7 +139,7 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 
 `loader_type`: `"kappa"` (по умолчанию) · `"pytorch"` · `"transformers"` · `"tensorflow"`
 
-Корень кэша: `~/cache/kappa-framework/datasets/{name}_{version}/`
+Корень кэша: каталог кэша ОС (`%LOCALAPPDATA%\kappa-framework\…` в Windows, `~/.cache/kappa-framework/…` в Linux). Уже скачанные `~/cache/kappa-framework/…` по-прежнему используются.
 
 ---
 
@@ -164,9 +168,11 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 
 | Метод | HTTP |
 |---|---|
-| `write_model_inference(model_id, predictions?, metrics?, inference_result?, artifacts?, …)` | схема → валидация → `POST …/models/inferences/{model}` → загрузка артефактов |
+| `write_model_inference(model_id, predictions?, metrics?, inference_result?, artifacts?, …)` | схема → валидация → `POST …/models/inferences/{model}` → артефакты → PUT pipeline (Kappa ≥ 2.14) |
 | `upload_model_artifacts(model_id, inference_id, paths, …)` | по одной загрузке на файл, транспорт выбирается по размеру |
-| `upload_model_inference_file(model_id, inference_id, file_path, file_category?, replace?, use_session?)` | `POST`/`PATCH …/models/inferences/files/{model}/{inference}` — для больших файлов переключается на сессию загрузки |
+| `upload_model_inference_file(..., file_category?, entity_id?, field_name?)` | `POST`/`PATCH …/inferences/files/{model}/{inference}` |
+| `upload_prediction_output_file(..., entity_id, field_name)` | `file_category=6` + file-ref для `predicted` (Kappa ≥ 2.14) |
+| `detect_model_pipeline` / `put_inference_pipeline` | локальный детект; `PUT …/inferences/{model}/{inference}/pipeline` |
 | `upload_model_artifact_session(..., on_progress?, checksum?, resume?, max_retries?, wait_for_slot?)` | `…/upload-session` → `…/part-urls` → presigned `PUT` → `…/complete` |
 | `get_model_artifact_upload_session` / `abort_model_artifact_upload_session` | `…/upload-session/{upload_id}` |
 | `get_model_inference_artifacts_package` / `get_model_version_artifacts_package` | `GET …/package` / `…/artifacts/package` |
@@ -174,7 +180,7 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 | `download_model_inference_artifacts_package(..., dest_dir)` | манифест + загрузка по файлам |
 | `download_model_inference_artifacts` / `download_model_version_artifacts` | `GET …/zip` — только небольшие пакеты |
 
-`file_category`: `1` Training · `2` Inference · `3` Model · `4` Data · `5` Other. Обычная загрузка по умолчанию использует `2`, сессии загрузки и оба помощника выше — `3`.
+`file_category`: `1` Training · `2` Inference · `3` Model · `4` Data · `5` Other · `6` Prediction output (Kappa ≥ 2.14, нужны `entityId` + `fieldName`). Обычная загрузка по умолчанию использует `2`, сессии загрузки и пакетные помощники — `3`.
 
 Слишком большие обычные загрузки отклоняются с `413 USE_KAPPA_APK`, а пакеты сверх лимита zip отклоняют zip-маршрут с `409 PACKAGE_TOO_LARGE_FOR_ZIP`. SDK обрабатывает оба случая: большие загрузки автоматически переводятся на сессию, а `download_model_inference_artifacts_package` скачивает каждый файл отдельно. Для сессий на сервере должно быть включено объектное хранилище (иначе `503`), а число одновременных загрузок на модель ограничено (`429`) — параметр `wait_for_slot` пережидает лимит; отменяйте брошенные сессии, чтобы освободить слот быстрее.
 
@@ -186,8 +192,8 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 written = client.write_model_inference(
     model_id,
     predictions=[
-        {"entityId": item.entity_id, "original": item.annotations,
-         "predicted": {"class_name": "pizza", "confidence": 0.98}}
+        {"entityId": item.entity_id,
+         "predicted": {"label": "pizza", "confidence": 0.98}}
     ],
     metrics={"accuracy": 0.93},
     artifacts=["./checkpoints", "./config.json"],   # файлы и/или каталоги
@@ -196,7 +202,18 @@ written = client.write_model_inference(
 print(written["inferenceId"], written["schema"]["kind"])
 ```
 
-В предсказаниях допускаются как `entity_id`, так и `entityId`, а строка в `predicted` оборачивается в ключ, которого требует схема (`class_name`, `text`, `answer`, …). Передайте `inference_result=…`, чтобы отправить собственный документ. Если схема отвергает данные, поднимается `ValueError` со списком путей JSON — до записи чего-либо на сервер.
+В предсказаниях допускаются как `entity_id`, так и `entityId`. Строка в `predicted` оборачивается в единственный обязательный строковый ключ схемы (`class_name` / `text` на старых шаблонах, `label` / `output_text` на Kappa ≥ 2.14). Лишние ключи сохраняются. `original` не обязателен и не является эталоном. Платформа не переименовывает `class_name` в `label` — отправляйте ключ из схемы. Если схема требует файл или несколько ключей, передавайте словарь (голая строка отвергается). Метрики проходят как словарь; Kappa ≥ 2.14 принимает лишние числовые имена. Передайте `inference_result=…`, чтобы отправить собственный документ. Если схема отвергает данные, поднимается `ValueError` со списком путей JSON — до записи чего-либо на сервер.
+
+На Kappa ≥ 2.14 `write_model_inference` также определяет pipeline по запущенной программе и файлам и делает PUT на инференс (`attach_pipeline=False` отключает). Старые бэкенды отвечают 404 — инференс всё равно создаётся.
+
+Файловые выходы (image-to-image) требуют загрузки prediction-файла и file-ref в `predicted`:
+
+```python
+ref = client.upload_prediction_output_file(
+    model_id, inference_id, "pred.png", entity_id="e1", field_name="output_image",
+    content_type="image/png",
+)
+```
 
 ### Большие веса (только через KappaApk)
 

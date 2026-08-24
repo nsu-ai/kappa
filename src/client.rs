@@ -546,14 +546,29 @@ fn http_error_to_pyerr(status: reqwest::StatusCode, text: String) -> PyErr {
     } else {
         format!("HTTP {}: {}", status, detail)
     };
-    // 409 conflicts (e.g. dataset used in benchmarks, wrong dataset status)
+    let upper = detail.to_ascii_uppercase();
     if status.as_u16() == 409 {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(msg)
+        let extra = if upper.contains("DATASET_PERMANENTLY_DELETED") {
+            " Dataset was permanently deleted after the recover window (entity files purged)."
+        } else if upper.contains("DATASET_DELETED") {
+            " Dataset is soft-deleted (status 0); recover first or omit short-info edits."
+        } else if upper.contains("PRIMARY_TAG_IMMUTABLE") {
+            " Cannot remove or replace the primary ML tag via PATCH tags."
+        } else {
+            ""
+        };
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}{}", msg, extra))
     } else if status.as_u16() == 403 {
-        PyErr::new::<pyo3::exceptions::PyPermissionError, _>(format!(
-            "{}. Hint: call client.get_my_permissions(dataset_id=...) or has_permission('dataset.write', dataset_id=...).",
-            msg
-        ))
+        if upper.contains("PRIVATE_VERSION_ORG_ONLY") {
+            PyErr::new::<pyo3::exceptions::PyPermissionError, _>(
+                "HTTP 403: This version is private to the owning organization.",
+            )
+        } else {
+            PyErr::new::<pyo3::exceptions::PyPermissionError, _>(format!(
+                "{}. Hint: call client.get_my_permissions(dataset_id=...) or has_permission('dataset.write', dataset_id=...).",
+                msg
+            ))
+        }
     } else if status.as_u16() == 401 {
         PyErr::new::<pyo3::exceptions::PyPermissionError, _>(msg)
     } else if status.as_u16() == 429 {
@@ -605,18 +620,121 @@ fn py_path_list(v: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
     })
 }
 
-fn encode_new_dataset_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
-    if let Ok(d) = v.extract::<PyRef<NewDataset>>() {
-        return d.to_api_json();
+fn prediction_file_ref_from_upload(
+    py: Python<'_>,
+    upload: &Bound<'_, PyAny>,
+    file_name: Option<String>,
+    content_type: Option<String>,
+) -> PyResult<PyObject> {
+    let value = crate::utils::python_json::pyobject_to_rust_value(
+        &upload.clone().unbind(),
+        "prediction file upload",
+    )?;
+    let artifact_id = value
+        .get("fileId")
+        .or_else(|| value.get("artifactId"))
+        .or_else(|| value.get("file_id"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let name = file_name
+        .map(serde_json::Value::String)
+        .or_else(|| value.get("fileName").or_else(|| value.get("file_name")).cloned())
+        .unwrap_or(serde_json::Value::Null);
+    let mut obj = serde_json::Map::new();
+    obj.insert("artifactId".to_string(), artifact_id);
+    obj.insert("fileName".to_string(), name);
+    if let Some(ct) = content_type.filter(|s| !s.is_empty()) {
+        obj.insert("contentType".to_string(), serde_json::Value::String(ct));
+    } else if let Some(ct) = value.get("contentType").or_else(|| value.get("content_type")) {
+        obj.insert("contentType".to_string(), ct.clone());
     }
-    py_json_dumps(v)
+    crate::utils::python_json::json_value_to_pyobject(py, &serde_json::Value::Object(obj))
+}
+
+pub(crate) fn attach_inference_pipeline<T: crate::traits::ApiClient>(
+    py: Python<'_>,
+    client: &T,
+    model_id: &str,
+    inference_id: i32,
+    artifact_paths: &[String],
+    explicit: Option<&Bound<'_, PyAny>>,
+    pipeline_type: i32,
+    model: Option<&Bound<'_, PyAny>>,
+    entrypoint: Option<&str>,
+    project_files: &[String],
+    endpoint_url: Option<&str>,
+) -> serde_json::Value {
+    if inference_id == 0 {
+        return crate::pipeline_detect::PipelineDetect::skipped("no inferenceId").to_status_json();
+    }
+    let mut detect = if let Some(body) = explicit {
+        match py_json_value(Some(body)) {
+            Ok(Some(value)) => {
+                let draft = crate::pipeline_detect::manual_draft(value, pipeline_type);
+                crate::pipeline_detect::PipelineDetect {
+                    draft: Some(draft),
+                    attached: true,
+                    reason: "manual".to_string(),
+                    candidates: Vec::new(),
+                }
+            }
+            _ => crate::pipeline_detect::PipelineDetect::skipped("invalid pipeline body"),
+        }
+    } else {
+        crate::pipeline_detect::detect(
+            py,
+            artifact_paths,
+            model,
+            entrypoint,
+            project_files,
+            pipeline_type,
+        )
+    };
+    if let Some(url) = endpoint_url.map(str::trim).filter(|s| !s.is_empty())
+        && let Some(serde_json::Value::Object(obj)) = detect.draft.as_mut()
+    {
+        obj.insert("endpointUrl".to_string(), serde_json::json!(url));
+        obj.insert(
+            "pipelineType".to_string(),
+            serde_json::json!(crate::pipeline_detect::PIPELINE_TYPE_ONLINE),
+        );
+    }
+    crate::pipeline_detect::put_or_skip(client, model_id, inference_id, detect).to_status_json()
+}
+
+fn encode_new_dataset_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
+    let json = if let Ok(d) = v.extract::<PyRef<NewDataset>>() {
+        d.to_api_json()?
+    } else {
+        py_json_dumps(v)?
+    };
+    validate_dataset_short_info_in_json(&json)?;
+    Ok(json)
 }
 
 fn encode_update_dataset_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
-    if let Ok(d) = v.extract::<PyRef<UpdateDatasetRequest>>() {
-        return d.to_api_json();
+    let json = if let Ok(d) = v.extract::<PyRef<UpdateDatasetRequest>>() {
+        d.to_api_json()?
+    } else {
+        py_json_dumps(v)?
+    };
+    validate_dataset_short_info_in_json(&json)?;
+    Ok(json)
+}
+
+fn validate_dataset_short_info_in_json(json: &str) -> PyResult<()> {
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid dataset JSON: {}", e))
+    })?;
+    if let Some(s) = json_str_field(&value, &["datasetShortInfo", "dataset_short_info"])
+        && s.chars().count() > crate::models::datasets_model::DATASET_SHORT_INFO_MAX
+    {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "datasetShortInfo must be at most {} characters",
+            crate::models::datasets_model::DATASET_SHORT_INFO_MAX
+        )));
     }
-    py_json_dumps(v)
+    Ok(())
 }
 
 fn encode_new_entity_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
@@ -626,6 +744,7 @@ fn encode_new_entity_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
         py_json_dumps(v)?
     };
     validate_entity_labeling_algo_in_json(&json)?;
+    validate_entity_source_in_json(&json)?;
     Ok(json)
 }
 
@@ -648,10 +767,23 @@ fn validate_entity_labeling_algo_in_json(json: &str) -> PyResult<()> {
 }
 
 fn encode_update_entity_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
-    if let Ok(e) = v.extract::<PyRef<UpdateDatasetEntity>>() {
-        return e.to_api_json(v.py());
+    let json = if let Ok(e) = v.extract::<PyRef<UpdateDatasetEntity>>() {
+        e.to_api_json(v.py())?
+    } else {
+        py_json_dumps(v)?
+    };
+    validate_entity_source_in_json(&json)?;
+    Ok(json)
+}
+
+fn validate_entity_source_in_json(json: &str) -> PyResult<()> {
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid entity JSON: {}", e))
+    })?;
+    if let Some(s) = json_str_field(&value, &["entitySource", "entity_source", "source"]) {
+        crate::upload_limits::validate_source(s)?;
     }
-    py_json_dumps(v)
+    Ok(())
 }
 
 fn encode_new_version_payload(v: &Bound<'_, PyAny>) -> PyResult<String> {
@@ -1202,6 +1334,9 @@ impl KappaApkClient {
     }
 
     /// Update dataset metadata (`PUT /data-micro-services/v2/datasets/{dataset_id}`).
+    ///
+    /// Kappa ≥ 2.13: pass `datasetShortInfo` (max 10 000) to edit the blurb; omit to leave it.
+    /// Soft-deleted / permanently deleted datasets reject short-info edits (`409`).
     #[pyo3(signature = (dataset_id, update))]
     pub fn update_dataset(
         &self,
@@ -1210,6 +1345,24 @@ impl KappaApkClient {
     ) -> PyResult<PyObject> {
         let body = encode_update_dataset_payload(update)?;
         Datasets::update_dataset(self, dataset_id, body)
+    }
+
+    /// Add/remove non-primary dataset tags (`PATCH …/datasets/{id}/tags`, Kappa ≥ 2.13).
+    ///
+    /// Cannot drop the primary ML tag (`409 PRIMARY_TAG_IMMUTABLE`). Custom tags are allowed.
+    #[pyo3(signature = (dataset_id, add=None, remove=None))]
+    pub fn patch_dataset_tags(
+        &self,
+        dataset_id: i32,
+        add: Option<Vec<String>>,
+        remove: Option<Vec<String>>,
+    ) -> PyResult<PyObject> {
+        Datasets::patch_dataset_tags(
+            self,
+            dataset_id,
+            add.unwrap_or_default(),
+            remove.unwrap_or_default(),
+        )
     }
 
     /// Add a dataset entity with optional file attachments.
@@ -1312,13 +1465,17 @@ impl KappaApkClient {
     }
 
     /// Return the field/schema definition for a dataset.
+    ///
+    /// Kappa ≥ 2.13 merges `dataset_outputs` (strictest `nullable`). Create still allows
+    /// missing outputs; Labelled / Verified require them.
     pub fn get_dataset_fields(&self, dataset_id: i32) -> PyResult<PyObject> {
         Datasets::get_dataset_fields(self, dataset_id)
     }
 
     /// Soft-delete a dataset (sets `datasetStatus = 0`).
     ///
-    /// Recover with [`Self::recover_datasets`].
+    /// Recover with [`Self::recover_datasets`] while still inside the window.
+    /// Kappa ≥ 2.13: after expiry the dataset is status **5** and recover is `409`.
     #[pyo3(signature = (dataset_id, remark=None))]
     pub fn delete_dataset(
         &self,
@@ -1329,6 +1486,8 @@ impl KappaApkClient {
     }
 
     /// Recover soft-deleted datasets (`POST .../datasets/recover`).
+    ///
+    /// Kappa ≥ 2.13: `409 DATASET_PERMANENTLY_DELETED` after the expiry window.
     pub fn recover_datasets(&self, dataset_ids: Vec<i32>) -> PyResult<PyObject> {
         Datasets::recover_datasets(self, dataset_ids)
     }
@@ -1435,6 +1594,37 @@ impl KappaApkClient {
             self, dataset_id, entity_name, entity_status,
             version_id, page, size, order_by, order,
             entity_id, location_id, assignment_filter, start_date, end_date,
+        )
+    }
+
+    /// Cheap filtered entity count (`GET …/datasetEntities/count/{id}`, Kappa ≥ 2.13).
+    ///
+    /// Same filters as [`Self::filter_dataset_entities`] without pagination. Returns `{total: N}`.
+    #[pyo3(signature = (dataset_id, entity_name=None, entity_status=None, version_id=None, entity_id=None, location_id=None, assignment_filter=None, start_date=None, end_date=None))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn count_dataset_entities(
+        &self,
+        dataset_id: i32,
+        entity_name: Option<String>,
+        entity_status: Option<i32>,
+        version_id: Option<i32>,
+        entity_id: Option<String>,
+        location_id: Option<i32>,
+        assignment_filter: Option<String>,
+        start_date: Option<String>,
+        end_date: Option<String>,
+    ) -> PyResult<PyObject> {
+        Datasets::count_dataset_entities(
+            self,
+            dataset_id,
+            entity_name,
+            entity_status,
+            version_id,
+            entity_id,
+            location_id,
+            assignment_filter,
+            start_date,
+            end_date,
         )
     }
 
@@ -1602,7 +1792,11 @@ impl KappaApkClient {
 
     // --- bulk mutations (Kappa ≥ 2.11) ---
 
-    /// Enqueue mark-labeled job (`202` + `jobId`). Use `all_eligible=True` or pass entity IDs.
+    /// Mark default-algorithm entities as labeled.
+    ///
+    /// Pass entity IDs or `all_eligible=True`. **Poll only if the response has `jobId`:**
+    /// that covers Kappa 2.11–2.12 (any size) and 2.13 multi-ID / `allEligible` (`202`).
+    /// Kappa ≥ 2.13 with **one** ID may return a sync `200` result (no `jobId`) or `422`.
     #[pyo3(signature = (dataset_id, dataset_entity_ids=None, remark=None, all_eligible=None))]
     pub fn mark_dataset_entities_labeled(
         &self,
@@ -1681,6 +1875,9 @@ impl KappaApkClient {
     }
 
     /// Poll until a bulk-mutation job is terminal (default timeout 1 hour).
+    ///
+    /// `succeeded` with 0 processed is still OK on Kappa 2.11–2.12. On ≥ 2.13 use
+    /// `job.mutation_failed()` (`status=failed` or `failed_count > 0`).
     #[pyo3(signature = (dataset_id, job_id, poll_interval_secs=None, timeout_secs=None, on_progress=None))]
     pub fn wait_for_bulk_mutation_job(
         &self,
@@ -2041,14 +2238,24 @@ impl KappaApkClient {
 
     /// Upload an inference artifact file.
     ///
-    /// `file_category`: 1 Training, 2 Inference (default), 3 Model, 4 Data, 5 Other.
+    /// `file_category`: 1 Training, 2 Inference (default), 3 Model, 4 Data, 5 Other,
+    /// 6 Prediction output (Kappa ≥ 2.14; requires `entity_id` + `field_name`).
     /// Set `replace=True` to PATCH an existing artifact.
     ///
     /// Large files use a multipart upload session automatically: pass `use_session=True` to
     /// force it, `False` to insist on the plain upload (which the server rejects with
     /// `413 USE_KAPPA_APK` past its sync cap). Sessions upsert by file name, so `replace`
     /// has no effect on them.
-    #[pyo3(signature = (model_id, inference_id, file_path, file_category=None, replace=false, use_session=None))]
+    #[pyo3(signature = (
+        model_id,
+        inference_id,
+        file_path,
+        file_category=None,
+        replace=false,
+        use_session=None,
+        entity_id=None,
+        field_name=None
+    ))]
     pub fn upload_model_inference_file(
         &self,
         model_id: String,
@@ -2057,6 +2264,8 @@ impl KappaApkClient {
         file_category: Option<i32>,
         replace: bool,
         use_session: Option<bool>,
+        entity_id: Option<String>,
+        field_name: Option<String>,
     ) -> PyResult<PyObject> {
         crate::models_api::ModelsApi::upload_model_inference_file(
             self,
@@ -2066,7 +2275,38 @@ impl KappaApkClient {
             file_category,
             replace,
             use_session,
+            entity_id.as_deref(),
+            field_name.as_deref(),
         )
+    }
+
+    /// Upload a prediction output file (`file_category=6`) and return a predicted file-ref.
+    ///
+    /// Kappa ≥ 2.14. Use the returned dict as `predicted[field_name]` (e.g. `output_image`).
+    /// Older backends reject category 6.
+    #[pyo3(signature = (model_id, inference_id, file_path, entity_id, field_name, content_type=None))]
+    pub fn upload_prediction_output_file(
+        &self,
+        py: Python<'_>,
+        model_id: String,
+        inference_id: i32,
+        file_path: String,
+        entity_id: String,
+        field_name: String,
+        content_type: Option<String>,
+    ) -> PyResult<PyObject> {
+        let uploaded = crate::models_api::ModelsApi::upload_model_inference_file(
+            self,
+            &model_id,
+            inference_id,
+            &file_path,
+            Some(crate::model_artifacts::FILE_CATEGORY_PREDICTION_OUTPUT),
+            false,
+            Some(false),
+            Some(&entity_id),
+            Some(&field_name),
+        )?;
+        prediction_file_ref_from_upload(py, uploaded.bind(py), None, content_type)
     }
 
     /// Write an inference result and its artifacts in one call, following the model's schema.
@@ -2081,13 +2321,20 @@ impl KappaApkClient {
     /// `metrics` are then ignored.
     ///
     /// Returns `{"modelId", "inferenceId", "schema", "validation", "artifacts",
-    /// "inferenceResult"}`.
+    /// "inferenceResult", "pipeline"}`.
+    ///
+    /// A bare `predicted` string is wrapped into the schema's single required string key
+    /// (`class_name` on older templates, `label` / `output_text` on Kappa ≥ 2.14). Extra
+    /// predicted keys are kept. `original` is optional and not used as ground truth.
+    ///
+    /// After artifacts upload, the client auto-detects an inference pipeline from the
+    /// running program + files and PUTs it on the inference (Kappa ≥ 2.14; 404 is skipped).
     ///
     /// # Python Example
     /// ```python
     /// written = client.write_model_inference(
     ///     model_id,
-    ///     predictions=[{"entityId": e.entity_id, "predicted": {"class_name": "pizza"}}],
+    ///     predictions=[{"entityId": e.entity_id, "predicted": {"label": "pizza"}}],
     ///     metrics={"accuracy": 0.93},
     ///     artifacts=["./checkpoints"],
     ///     on_progress=lambda name, sent, total, pct: print(name, pct),
@@ -2105,7 +2352,13 @@ impl KappaApkClient {
         validate=true,
         use_session=None,
         skip_existing=true,
-        on_progress=None
+        on_progress=None,
+        attach_pipeline=true,
+        pipeline=None,
+        pipeline_type=None,
+        model=None,
+        entrypoint=None,
+        endpoint_url=None
     ))]
     pub fn write_model_inference(
         &self,
@@ -2121,20 +2374,57 @@ impl KappaApkClient {
         use_session: Option<bool>,
         skip_existing: bool,
         on_progress: Option<PyObject>,
+        attach_pipeline: bool,
+        pipeline: Option<&Bound<'_, PyAny>>,
+        pipeline_type: Option<i32>,
+        model: Option<&Bound<'_, PyAny>>,
+        entrypoint: Option<String>,
+        endpoint_url: Option<String>,
     ) -> PyResult<PyObject> {
+        let artifact_paths = py_path_list(artifacts)?;
         let request = crate::inference_writer::InferenceWrite {
             predictions: py_json_value(predictions)?,
             metrics: py_json_value(metrics)?,
             inference_result: py_json_value(inference_result)?,
-            benchmark_id,
-            artifacts: py_path_list(artifacts)?,
+            benchmark_id: benchmark_id.clone(),
+            artifacts: artifact_paths.clone(),
             file_category,
             validate,
             use_session,
             skip_existing,
             on_progress,
         };
-        let written = crate::inference_writer::InferenceWriter::write(self, &model_id, request)?;
+        let mut written = crate::inference_writer::InferenceWriter::write(self, &model_id, request)?;
+        if attach_pipeline {
+            let inference_id = written
+                .get("inferenceId")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as i32;
+            let default_type = if endpoint_url.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_some() {
+                crate::pipeline_detect::PIPELINE_TYPE_ONLINE
+            } else if benchmark_id.is_some() {
+                crate::pipeline_detect::PIPELINE_TYPE_BENCHMARK
+            } else {
+                crate::pipeline_detect::PIPELINE_TYPE_BATCH
+            };
+            let ptype = pipeline_type.unwrap_or(default_type);
+            let status = attach_inference_pipeline(
+                py,
+                self,
+                &model_id,
+                inference_id,
+                &artifact_paths,
+                pipeline,
+                ptype,
+                model,
+                entrypoint.as_deref(),
+                &[],
+                endpoint_url.as_deref(),
+            );
+            written
+                .as_object_mut()
+                .map(|obj| obj.insert("pipeline".to_string(), status));
+        }
         crate::utils::python_json::json_value_to_pyobject(py, &written)
     }
 
@@ -2455,6 +2745,55 @@ impl KappaApkClient {
         crate::models_api::ModelsApi::validate_model_pipeline(self, &model_id, version_id)
     }
 
+    /// Detect a pipeline draft from the running program and local artifact paths (no HTTP).
+    #[pyo3(signature = (artifact_paths=None, model=None, entrypoint=None, pipeline_type=None))]
+    pub fn detect_model_pipeline(
+        &self,
+        py: Python<'_>,
+        artifact_paths: Option<&Bound<'_, PyAny>>,
+        model: Option<&Bound<'_, PyAny>>,
+        entrypoint: Option<String>,
+        pipeline_type: Option<i32>,
+    ) -> PyResult<PyObject> {
+        let paths = py_path_list(artifact_paths)?;
+        let detected = crate::pipeline_detect::detect(
+            py,
+            &paths,
+            model,
+            entrypoint.as_deref(),
+            &[],
+            pipeline_type.unwrap_or(crate::pipeline_detect::PIPELINE_TYPE_BATCH),
+        );
+        crate::utils::python_json::json_value_to_pyobject(py, &detected.to_status_json())
+    }
+
+    /// `PUT /models/inferences/{modelId}/{inferenceId}/pipeline` (Kappa ≥ 2.14).
+    pub fn put_inference_pipeline(
+        &self,
+        model_id: String,
+        inference_id: i32,
+        pipeline: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        crate::models_api::ModelsApi::put_inference_pipeline(
+            self,
+            &model_id,
+            inference_id,
+            py_json_dumps(pipeline)?,
+        )
+    }
+
+    /// Build `{artifactId, fileName, contentType}` from an upload response.
+    #[pyo3(signature = (upload, file_name=None, content_type=None))]
+    pub fn prediction_file_ref(
+        &self,
+        py: Python<'_>,
+        upload: &Bound<'_, PyAny>,
+        file_name: Option<String>,
+        content_type: Option<String>,
+    ) -> PyResult<PyObject> {
+        prediction_file_ref_from_upload(py, upload, file_name, content_type)
+    }
+
     // --- benchmark registry ---
 
     /// List benchmarks (unfiltered first page). Use [`Self::filter_benchmarks`] for queries.
@@ -2678,7 +3017,7 @@ impl KappaApkClient {
     /// `datasetVersionNo` first, then falls back to the benchmark proxy when you only hold
     /// `benchmark.read`; either path uses the legacy single zip when the manifest says so.
     /// Both IDs are read from the benchmark detail when omitted. Returns the extraction
-    /// directory, cached under `~/cache/kappa-framework/benchmarks/{benchmark_id}/`.
+    /// directory, cached under the OS cache dir `kappa-framework/benchmarks/{id}/`.
     #[pyo3(signature = (benchmark_id, dataset_id=None, version_no=None, dataset_path=None))]
     pub fn download_benchmark_dataset_package(
         &self,
