@@ -4,6 +4,7 @@
 use pyo3::prelude::*;
 
 // Core modules
+mod api_policy;
 mod client;
 mod traits;
 mod models;

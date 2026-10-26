@@ -73,7 +73,7 @@ def main() -> int:
         "--publish-type",
         type=int,
         default=1,
-        help="0 Not Published · 1 Private · 2 Open Source · 3 Public on Demand · 4 Purchase",
+        help="0 Not Published · 1 Private · 2 Open Source · 3 Public on Demand",
     )
     parser.add_argument("--skip-create", action="store_true", help="Reuse existing dataset by name")
     args = parser.parse_args()

@@ -24,7 +24,11 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 | `is_authenticated()` | — | Есть ли сохранённый токен |
 | `get_base_url()` / `set_base_url(url)` | — | Получение/установка URL шлюза |
 | `__enter__` / `__exit__` | — | Контекстный менеджер: вход при входе, выход при выходе |
-| `make_request(method, endpoint, data?, token?)` | *произвольный* | Низкоуровневый аутентифицированный запрос |
+| `make_request(method, endpoint, data?, token?)` | *произвольный* | Низкоуровневый запрос. Пути `micro-services/v1` и `/api/v1` отклоняются до отправки |
+
+`connect()` отправляет только `loginId` и `passwd`. IP клиента сервер берёт из соединения. **429** `LOGIN_TEMPORARILY_BLOCKED` и **403** `TOO_MANY_ACTIVE_DEVICES` — отдельные ошибки; оба кода стирают сохранённый пароль, поэтому тот же объект не повторяет попытку входа. Поздний **401** значит, что bearer уже недействителен (смена пароля отзывает все сессии): создайте новый `KappaApkClient`. **403** `AUTHENTICATED_SESSION_REQUIRED` значит, что маршруту нужна пользовательская сессия; это не отсутствие права на датасет.
+
+Имена файлов в multipart перед отправкой сводятся к одному сегменту пути. `reqwest` 0.11 снимает `Authorization`, если редирект меняет хост, поэтому presigned URL объектного хранилища bearer не получает.
 
 ---
 
@@ -112,7 +116,7 @@ client = KappaApkClient(base_url: str, login_id: str, passwd: str)
 | `publish_dataset_version(dataset_id, version_no, publish_type)` | `POST …/versions/publish/{id}/{ver}?publish_type=N` |
 | `refresh_dataset_version` / `get_version_build_job` / `wait_for_version_build_job` | build-jobs API |
 
-`publish_type`: `0` Not Published · `1` Private · `2` Open Source · `3` Public on Demand · `4` Purchase
+`publish_type`: `0` Not Published · `1` Private · `2` Open Source · `3` Public on Demand. Открытая видимость — только `2` и `3`. Любое другое значение клиент отклоняет сам (`INVALID_PUBLISH_TYPE`).
 
 На Kappa ≥ 2.11 дождитесь `buildStatus=ready` перед publish/download.
 

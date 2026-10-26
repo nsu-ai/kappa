@@ -55,8 +55,8 @@ pub fn create_dir_all_retry(dir: &Path) -> std::io::Result<()> {
     }))
 }
 
-/// Resolve a zip entry path under `base`, rejecting traversal (`..`, absolute paths).
-fn resolve_zip_entry_path(base: &Path, entry_name: &str) -> Result<PathBuf, String> {
+/// Resolve a relative entry under `base`, rejecting traversal (`..`, absolute paths).
+pub(crate) fn resolve_zip_entry_path(base: &Path, entry_name: &str) -> Result<PathBuf, String> {
     let entry_path = Path::new(entry_name);
     if entry_path.is_absolute() {
         return Err(format!("Zip entry '{}' is absolute", entry_name));

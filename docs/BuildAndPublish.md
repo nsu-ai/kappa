@@ -79,7 +79,7 @@ CIBW_ARCHS_LINUX="x86_64 aarch64" cibuildwheel --output-dir dist
 |---|---|---|
 | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | push / PR | `cargo test`, clippy, maturin wheels (py3.9–3.13), sdist |
 
-**PyPI:** `./build_wheel.sh --upload` (or `twine upload dist/*`). Create a GitHub Release tag (e.g. `v3.0.5`) to mark the cut.
+**PyPI:** `./build_wheel.sh --upload` (or `twine upload dist/*`). Create a GitHub Release tag (e.g. `v3.0.6`) to mark the cut.
 
 ---
 

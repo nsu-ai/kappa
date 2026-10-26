@@ -154,6 +154,7 @@ created = client.create_dataset_version(
 build = client.wait_for_version_build_job(created["jobId"])
 assert build.is_ready()
 client.publish_dataset_version(42, created["versionNo"], publish_type=2)
+# publish_type: 0–3. Открытая видимость — 2 и 3. Другие значения клиент отклоняет (INVALID_PUBLISH_TYPE).
 versions = client.list_dataset_versions(42)
 client.delete_dataset_version(42, "0.9.0")
 
