@@ -259,7 +259,7 @@ impl ModelArtifactsApi {
                 .and_then(|s| s.to_str())
                 .unwrap_or(file_id);
             let dest = crate::utils::zip_utils::resolve_zip_entry_path(Path::new(dest_dir), leaf)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))?;
+                .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
             written.push(Self::download_model_inference_artifact_file(
                 client,
                 model_id,

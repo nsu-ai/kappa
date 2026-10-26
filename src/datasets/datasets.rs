@@ -752,9 +752,8 @@ impl Datasets {
             let files: Vec<ItemFile> = file_names
                 .into_iter()
                 .map(|name| {
-                    let file = zip_utils::resolve_zip_entry_path(data_dir, &name).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(e)
-                    })?;
+                    let file = zip_utils::resolve_zip_entry_path(data_dir, &name)
+                        .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
                     Ok(ItemFile {
                         file_id: entity_id.to_string(),
                         file_name: name,
