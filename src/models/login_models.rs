@@ -3,6 +3,7 @@
 
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 #[pyclass]
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -10,4 +11,10 @@ use serde::{Deserialize, Serialize};
 pub struct LoginRequest {
     pub login_id: String,
     pub passwd: String,
+}
+
+impl Drop for LoginRequest {
+    fn drop(&mut self) {
+        self.passwd.zeroize();
+    }
 }

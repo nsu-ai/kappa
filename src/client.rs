@@ -35,7 +35,7 @@ use zeroize::Zeroizing;
 /// response = client.connect()
 /// token = response['token']
 ///
-/// data = client.make_request("GET", "/api/v2/datasets", None, token)
+/// data = client.make_request("GET", "/data-micro-services/v2/datasets/filter", None, token)
 /// ```
 #[pyclass]
 pub struct KappaApkClient {
@@ -92,6 +92,7 @@ impl ApiClient for KappaApkClient {
         data: Option<String>,
         token: Option<String>,
     ) -> PyResult<PyObject> {
+        crate::api_policy::reject_retired_v1_path(&endpoint)?;
         self.runtime.block_on(async {
             let url = format!("{}{}", self.base_url, endpoint);
 
@@ -99,6 +100,7 @@ impl ApiClient for KappaApkClient {
                 "GET"    => self.client.get(&url),
                 "POST"   => self.client.post(&url),
                 "PUT"    => self.client.put(&url),
+                "PATCH"  => self.client.patch(&url),
                 "DELETE" => self.client.delete(&url),
                 other => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     format!("Unsupported HTTP method: {}", other),
@@ -139,6 +141,7 @@ impl ApiClient for KappaApkClient {
     }
 
     fn fetch_url_bytes(&self, url: &str) -> PyResult<Vec<u8>> {
+        crate::api_policy::reject_retired_v1_path(url)?;
         let url = url.to_string();
         self.runtime.block_on(async {
             let response = self
@@ -173,6 +176,7 @@ impl ApiClient for KappaApkClient {
         file_parts: Vec<(Vec<u8>, String)>,
         token: Option<String>,
     ) -> PyResult<PyObject> {
+        crate::api_policy::reject_retired_v1_path(&endpoint)?;
         let url = format!("{}{}", self.base_url, endpoint);
         let http = self.client.clone();
         let method_owned = method.to_uppercase();
@@ -184,7 +188,7 @@ impl ApiClient for KappaApkClient {
             let mut form = multipart::Form::new().text(jfield.clone(), json_value);
             for (bytes, fname) in file_parts {
                 let part = multipart::Part::bytes(bytes)
-                    .file_name(fname)
+                    .file_name(crate::api_policy::safe_upload_filename(&fname))
                     .mime_str("application/octet-stream")
                     .map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
@@ -234,6 +238,7 @@ impl ApiClient for KappaApkClient {
         file_parts: Vec<(Vec<u8>, String)>,
         token: Option<String>,
     ) -> PyResult<PyObject> {
+        crate::api_policy::reject_retired_v1_path(&endpoint)?;
         if file_parts.is_empty() {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "At least one file is required for multipart upload",
@@ -247,7 +252,7 @@ impl ApiClient for KappaApkClient {
             let mut form = multipart::Form::new();
             for (bytes, fname) in file_parts {
                 let part = multipart::Part::bytes(bytes)
-                    .file_name(fname)
+                    .file_name(crate::api_policy::safe_upload_filename(&fname))
                     .mime_str("application/octet-stream")
                     .map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
@@ -299,6 +304,7 @@ impl ApiClient for KappaApkClient {
         token: Option<String>,
         on_upload_progress: Option<PyObject>,
     ) -> PyResult<PyObject> {
+        crate::api_policy::reject_retired_v1_path(&endpoint)?;
         use futures_util::StreamExt;
         use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
         use std::sync::Arc;
@@ -308,11 +314,11 @@ impl ApiClient for KappaApkClient {
         let http = self.client.clone();
         let runtime = Arc::clone(&self.runtime);
         let path = std::path::PathBuf::from(&file_path);
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("upload.bin")
-            .to_string();
+        let file_name = crate::api_policy::safe_upload_filename(
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("upload.bin"),
+        );
         let total = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         let progress_cb = on_upload_progress.map(Arc::new);
 
@@ -435,6 +441,7 @@ impl ApiClient for KappaApkClient {
     }
 
     fn download_bytes(&self, endpoint: String, token: Option<String>) -> PyResult<Vec<u8>> {
+        crate::api_policy::reject_retired_v1_path(&endpoint)?;
         let url = format!("{}{}", self.base_url, endpoint);
         let http = self.client.clone();
         self.runtime.block_on(async move {
@@ -473,10 +480,12 @@ impl ApiClient for KappaApkClient {
         file_name: String,
         token: Option<String>,
     ) -> PyResult<PyObject> {
+        crate::api_policy::reject_retired_v1_path(&endpoint)?;
         let url = format!("{}{}", self.base_url, endpoint);
         let http = self.client.clone();
         let method_owned = method.to_uppercase();
         let field = field_name.to_string();
+        let file_name = crate::api_policy::safe_upload_filename(&file_name);
 
         self.runtime.block_on(async move {
             let part = multipart::Part::bytes(file_bytes)
@@ -526,59 +535,9 @@ impl ApiClient for KappaApkClient {
     }
 }
 
-/// Map HTTP error bodies to Python exceptions, preserving status for 409 conflicts etc.
+/// Map HTTP error bodies to Python exceptions. See `api_policy` for the 2.15 codes.
 fn http_error_to_pyerr(status: reqwest::StatusCode, text: String) -> PyErr {
-    let detail = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-        json.get("detail")
-            .map(|v| {
-                if let Some(s) = v.as_str() {
-                    s.to_string()
-                } else {
-                    v.to_string()
-                }
-            })
-            .unwrap_or_else(|| text.clone())
-    } else {
-        text.clone()
-    };
-    let msg = if detail.is_empty() {
-        format!("HTTP {}", status)
-    } else {
-        format!("HTTP {}: {}", status, detail)
-    };
-    let upper = detail.to_ascii_uppercase();
-    if status.as_u16() == 409 {
-        let extra = if upper.contains("DATASET_PERMANENTLY_DELETED") {
-            " Dataset was permanently deleted after the recover window (entity files purged)."
-        } else if upper.contains("DATASET_DELETED") {
-            " Dataset is soft-deleted (status 0); recover first or omit short-info edits."
-        } else if upper.contains("PRIMARY_TAG_IMMUTABLE") {
-            " Cannot remove or replace the primary ML tag via PATCH tags."
-        } else {
-            ""
-        };
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{}{}", msg, extra))
-    } else if status.as_u16() == 403 {
-        if upper.contains("PRIVATE_VERSION_ORG_ONLY") {
-            PyErr::new::<pyo3::exceptions::PyPermissionError, _>(
-                "HTTP 403: This version is private to the owning organization.",
-            )
-        } else {
-            PyErr::new::<pyo3::exceptions::PyPermissionError, _>(format!(
-                "{}. Hint: call client.get_my_permissions(dataset_id=...) or has_permission('dataset.write', dataset_id=...).",
-                msg
-            ))
-        }
-    } else if status.as_u16() == 401 {
-        PyErr::new::<pyo3::exceptions::PyPermissionError, _>(msg)
-    } else if status.as_u16() == 429 {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-            "{} (server busy — retry after Retry-After / retryAfterSeconds)",
-            msg
-        ))
-    } else {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
-    }
+    crate::api_policy::http_error_to_pyerr(status, text)
 }
 
 // ---------------------------------------------------------------------------
@@ -864,6 +823,8 @@ impl KappaApkClient {
     #[new]
     pub fn new(base_url: String, login_id: String, passwd: String) -> PyResult<Self> {
         // Connect timeout only — bulk uploads can run for a long time with no overall deadline.
+        // reqwest 0.11 strips Authorization when a redirect changes host, so a presigned
+        // object-storage URL does not receive the bearer. Do not install a policy that copies it.
         let client = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(30))
             .build()
@@ -891,6 +852,11 @@ impl KappaApkClient {
 
     /// Authenticate with the server and return user info with token.
     ///
+    /// The JSON body is only `loginId` and `passwd`. The server takes the client IP
+    /// from the connection. **429** `LOGIN_TEMPORARILY_BLOCKED` and **403**
+    /// `TOO_MANY_ACTIVE_DEVICES` clear the in-memory password so this object cannot
+    /// retry the lockout. A successful login clears it as well.
+    ///
     /// # Python Example
     ///
     /// ```python
@@ -912,7 +878,7 @@ impl KappaApkClient {
         let client = self.client.clone();
         let runtime = Arc::clone(&self.runtime);
 
-        let login_data: User = Python::with_gil(|py| {
+        let login_attempt: Result<User, (PyErr, bool)> = Python::with_gil(|py| {
             py.allow_threads(move || {
                 runtime.block_on(async move {
                     let response = client
@@ -923,30 +889,44 @@ impl KappaApkClient {
                         .send()
                         .await
                         .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
-                                "Request failed: {}",
-                                e
-                            ))
+                            (
+                                PyErr::new::<pyo3::exceptions::PyConnectionError, _>(format!(
+                                    "Request failed: {}",
+                                    e
+                                )),
+                                false,
+                            )
                         })?;
 
                     if response.status().is_success() {
                         response.json::<User>().await.map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                                "Failed to parse login response: {}",
-                                e
-                            ))
+                            (
+                                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                                    "Failed to parse login response: {}",
+                                    e
+                                )),
+                                false,
+                            )
                         })
                     } else {
                         let status = response.status();
                         let msg = response.text().await.unwrap_or_default();
-                        Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "Login failed (HTTP {}): {}",
-                            status, msg
-                        )))
+                        let drop_password = crate::api_policy::login_failure_drops_password(&msg);
+                        Err((crate::api_policy::login_error_to_pyerr(status, msg), drop_password))
                     }
                 })
             })
-        })?;
+        });
+
+        let login_data = match login_attempt {
+            Ok(user) => user,
+            Err((err, drop_password)) => {
+                if drop_password {
+                    self.passwd = Zeroizing::new(String::new());
+                }
+                return Err(err);
+            }
+        };
 
         self.login_response = Some(login_data.clone());
         // Clear password from memory after successful authentication.
@@ -978,15 +958,18 @@ impl KappaApkClient {
 
     /// Make HTTP request with optional authentication.
     ///
+    /// Paths that still target `micro-services/v1` or `/api/v1` are rejected before a
+    /// socket is opened. `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` are supported.
+    ///
     /// # Python Example
     ///
     /// ```python
     /// # GET request
-    /// data = client.make_request("GET", "/api/v2/datasets", None, token)
+    /// data = client.make_request("GET", "/data-micro-services/v2/datasets/filter", None, token)
     ///
     /// # POST request
     /// import json
-    /// result = client.make_request("POST", "/api/v2/datasets", json.dumps({"name": "ds"}), token)
+    /// result = client.make_request("POST", "/data-micro-services/v2/datasets/new", json.dumps({"name": "ds"}), token)
     /// ```
     pub fn make_request(
         &self,
@@ -1067,7 +1050,7 @@ impl KappaApkClient {
     ///
     /// ```python
     /// with KappaApkClient("https://api.example.com", "user@example.com", "password") as client:
-    ///     data = client.make_request("GET", "/api/v2/datasets", None, None)
+    ///     data = client.make_request("GET", "/data-micro-services/v2/datasets/filter", None, None)
     /// ```
     pub fn __enter__(mut slf: PyRefMut<'_, Self>) -> PyResult<PyRefMut<'_, Self>> {
         slf.connect()?;
@@ -1430,7 +1413,7 @@ impl KappaApkClient {
     /// All parameters are optional; omit any you don't need. Pages are **1-based**;
     /// the response is `{items, total, page, size, pages}`.
     /// `dataset_tags` is a comma-separated tag string (e.g. `"vision,classification"`).
-    /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
+    /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand.
     /// `query_all=False` limits results to datasets you own, are assigned to, or that are
     /// shared with you; the backend default (`True`) also lists the public catalogue.
     /// `selected_version_id` / `selected_version_no` add `selectedVersionNo` and
@@ -1933,7 +1916,8 @@ impl KappaApkClient {
 
     /// Publish a dataset version.
     ///
-    /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
+    /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand.
+    /// Open visibility is 2 and 3. Any other value is rejected locally (`INVALID_PUBLISH_TYPE`).
     /// On Kappa ≥ 2.11 the archive must be `buildStatus=ready` or the API returns 409.
     pub fn publish_dataset_version(
         &self,

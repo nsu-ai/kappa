@@ -49,7 +49,7 @@ All traffic goes through the **Traefik API gateway**. Set `base_url` to the gate
 base_url = "https://kappa.nsu.ru:8061/"   # Traefik API gateway
 ```
 
-**v2 identity model:** the JWT bearer token identifies the user and org server-side. Client methods do **not** take `user_id` or `user_type_id` path parameters (unlike legacy v1 SDK).
+**Identity:** the JWT bearer token identifies the user and org. Client methods send that token and do not put `user_id` or `user_type_id` in the URL.
 
 ```python
 from kappa_apk import KappaApkClient
@@ -74,7 +74,7 @@ with KappaApkClient(base_url, login_id, passwd) as client:
 
 ```python
 import kappa_apk
-print(kappa_apk.version())   # "3.0.5"
+print(kappa_apk.version())   # "3.0.6"
 ```
 
 ---

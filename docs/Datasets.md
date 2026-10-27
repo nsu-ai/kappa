@@ -278,6 +278,8 @@ On Kappa ≥ 2.11 the backend only keeps the single zip when a version fits in o
 
 Publish/download before `buildStatus=ready` → HTTP **409** `VERSION_ARCHIVE_NOT_READY`.
 
+`publish_dataset_version` accepts `publish_type` 0–3 only. Open visibility is 2 (Open Source) and 3 (Public on Demand). Any other value is rejected locally with `INVALID_PUBLISH_TYPE`.
+
 Private versions (`publish_type=1`): non-org callers get **403** `PRIVATE_VERSION_ORG_ONLY` (“This version is private to the owning organization.”).
 
 Zip extraction validates paths (zip-slip protection via prefix check on extract paths).

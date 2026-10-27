@@ -44,7 +44,7 @@ maturin develop --release
 base_url = "https://kappa.nsu.ru:8061/"   # шлюз Traefik API
 ```
 
-**Модель идентификации v2:** JWT bearer-токен определяет пользователя и организацию на стороне сервера. Методы клиента **не** принимают `user_id` или `user_type_id` в пути URL (в отличие от устаревшего SDK v1).
+**Идентификация:** JWT bearer-токен определяет пользователя и организацию. Методы клиента отправляют этот токен и не помещают `user_id` или `user_type_id` в URL.
 
 ```python
 from kappa_apk import KappaApkClient
@@ -69,7 +69,7 @@ with KappaApkClient(base_url, login_id, passwd) as client:
 
 ```python
 import kappa_apk
-print(kappa_apk.version())   # "3.0.5"
+print(kappa_apk.version())   # "3.0.6"
 ```
 
 ---

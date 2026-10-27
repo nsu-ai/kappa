@@ -261,10 +261,16 @@ impl Benchmarks {
                         .map(|names| {
                             names
                                 .into_iter()
-                                .map(|name| ItemFile {
-                                    file_id: entity_id.clone(),
-                                    file_name: name.clone(),
-                                    file: data_dir.join(&name),
+                                .filter_map(|name| {
+                                    let file = crate::utils::zip_utils::resolve_zip_entry_path(
+                                        &data_dir, &name,
+                                    )
+                                    .ok()?;
+                                    Some(ItemFile {
+                                        file_id: entity_id.clone(),
+                                        file_name: name,
+                                        file,
+                                    })
                                 })
                                 .collect()
                         });

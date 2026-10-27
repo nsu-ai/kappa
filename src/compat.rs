@@ -29,6 +29,7 @@ pub const COMPAT_NOTES: &[&str] = &[
     "ML tags: first tag must be predefined for dataset_type/model_type (dataset_tags_{id})",
     "PUT datasetShortInfo max 10k; PATCH /datasets/{id}/tags; entity_source max 100 (Kappa ≥ 2.13)",
     "Kappa ≥ 2.14: predicted keys follow dataset outputs (label/output_text); original is not required; inference pipeline draft auto-detect on submit",
+    "Kappa ≥ 2.15: client rejects micro-services/v1 and /api/v1; publish_type is 0–3 (open visibility is 2 and 3); login lockout is LOGIN_TEMPORARILY_BLOCKED (429) and the device cap is TOO_MANY_ACTIVE_DEVICES (403); anonymous calls return AUTHENTICATED_SESSION_REQUIRED; a later 401 means create a new KappaApkClient",
 ];
 
 /// Return the minimum supported Kappa-framework version (`"2.11.0"`).

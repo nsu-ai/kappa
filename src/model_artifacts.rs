@@ -253,12 +253,13 @@ impl ModelArtifactsApi {
                 .get("fileName")
                 .and_then(|v| v.as_str())
                 .unwrap_or(file_id);
-            // Manifest names may carry directories; keep only the leaf.
+            // Manifest names may carry directories; keep only the leaf, and refuse `..`.
             let leaf = Path::new(file_name)
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or(file_id);
-            let dest = Path::new(dest_dir).join(leaf);
+            let dest = crate::utils::zip_utils::resolve_zip_entry_path(Path::new(dest_dir), leaf)
+                .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
             written.push(Self::download_model_inference_artifact_file(
                 client,
                 model_id,
@@ -324,15 +325,8 @@ impl ModelArtifactsApi {
         file_category: Option<i32>,
         checksum_sha256: Option<String>,
     ) -> PyResult<PyObject> {
-        if file_name.is_empty()
-            || file_name.contains('/')
-            || file_name.contains('\\')
-            || file_name.contains("..")
-        {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "file_name must be a bare name without path separators or '..'",
-            ));
-        }
+        // Same rule as multipart parts: only a single path segment leaves the process.
+        let file_name = crate::api_policy::safe_upload_filename(file_name);
         if bytes_expected == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "bytes_expected must be greater than 0",

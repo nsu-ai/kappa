@@ -751,12 +751,16 @@ impl Datasets {
 
             let files: Vec<ItemFile> = file_names
                 .into_iter()
-                .map(|name| ItemFile {
-                    file_id: entity_id.to_string(),
-                    file_name: name.clone(),
-                    file: data_dir.join(name),
+                .map(|name| {
+                    let file = zip_utils::resolve_zip_entry_path(data_dir, &name)
+                        .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
+                    Ok(ItemFile {
+                        file_id: entity_id.to_string(),
+                        file_name: name,
+                        file,
+                    })
                 })
-                .collect();
+                .collect::<PyResult<_>>()?;
             Ok(Some(files))
         } else {
             Ok(None)
@@ -2061,13 +2065,15 @@ tf_dataset = tf.data.Dataset.from_generator(
 
     /// `POST /datasets/versions/publish/{dataset_id}/{version_no}` — publish a version.
     ///
-    /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
+    /// `publish_type`: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand.
+    /// Open visibility is 2 and 3. Any other value, including the removed purchase type, is rejected locally.
     pub fn publish_dataset_version<T: ApiClient>(
         client: &T,
         dataset_id: i32,
         version_no: &str,
         publish_type: i32,
     ) -> PyResult<PyObject> {
+        crate::api_policy::validate_publish_type(publish_type)?;
         let token = client.require_token()?;
         let endpoint = format!(
             "/data-micro-services/v2/datasets/versions/publish/{}/{}?publish_type={}",
@@ -2908,7 +2914,7 @@ fn resolve_entity_file_sources<T: ApiClient>(
         }
         if t.starts_with("http://") || t.starts_with("https://") {
             let bytes = client.fetch_url_bytes(t)?;
-            let fname = guess_filename_from_url(t);
+            let fname = crate::api_policy::safe_upload_filename(&guess_filename_from_url(t));
             out.push((bytes, fname));
             continue;
         }
@@ -2927,11 +2933,9 @@ fn resolve_entity_file_sources<T: ApiClient>(
                         f, e
                     ))
                 })?;
-                let name = f
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("file")
-                    .to_string();
+                let name = crate::api_policy::safe_upload_filename(
+                    f.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+                );
                 out.push((bytes, name));
             }
         } else if md.is_file() {
@@ -2941,11 +2945,9 @@ fn resolve_entity_file_sources<T: ApiClient>(
                     t, e
                 ))
             })?;
-            let name = p
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("file")
-                .to_string();
+            let name = crate::api_policy::safe_upload_filename(
+                p.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+            );
             out.push((bytes, name));
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(

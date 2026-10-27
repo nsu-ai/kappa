@@ -24,7 +24,11 @@ Paths below are appended to `base_url`. All authenticated dataset/benchmark call
 | `is_authenticated()` | — | Whether a token is stored |
 | `get_base_url()` / `set_base_url(url)` | — | Gateway URL get/set |
 | `__enter__` / `__exit__` | — | Context manager: connect on enter, close on exit |
-| `make_request(method, endpoint, data?, token?)` | *custom* | Low-level authenticated request |
+| `make_request(method, endpoint, data?, token?)` | *custom* | Low-level request. `micro-services/v1` and `/api/v1` are rejected before the call |
+
+`connect()` sends only `loginId` and `passwd`. The server reads the client IP from the connection. **429** `LOGIN_TEMPORARILY_BLOCKED` and **403** `TOO_MANY_ACTIVE_DEVICES` are separate errors, and both clear the saved password so the same object cannot retry the lockout. A later **401** means the bearer is dead (a password change revokes every session): create a new `KappaApkClient`. **403** `AUTHENTICATED_SESSION_REQUIRED` means the route needs a signed-in user; it is not a missing dataset permission.
+
+Multipart upload names are reduced to one path segment before they are sent. `reqwest` 0.11 strips `Authorization` when a redirect changes host, so a presigned object-storage URL does not receive the bearer.
 
 ---
 
@@ -110,7 +114,7 @@ Helpers (module-level): `join_ml_tags(primary, *extras)`, `ensure_primary_ml_tag
 | `refresh_dataset_version(dataset_id, version_no)` | `PATCH …/versions/refresh/{id}/{ver}` |
 | `get_version_build_job` / `wait_for_version_build_job` / `retry_version_build_job` | `…/versions/build-jobs/{jobId}` |
 
-`publish_type`: `0` Not Published · `1` Private · `2` Open Source · `3` Public on Demand · `4` Purchase
+`publish_type`: `0` Not Published · `1` Private · `2` Open Source · `3` Public on Demand. Open visibility is `2` and `3`. Any other value is rejected locally (`INVALID_PUBLISH_TYPE`).
 
 Wait for `buildStatus=ready` (via `wait_for_version_build_job`) before publish/download on Kappa ≥ 2.11.
 

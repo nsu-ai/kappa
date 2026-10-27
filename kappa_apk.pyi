@@ -221,7 +221,7 @@ class Dataset:
     def dataset_tags(self) -> str: ...
     @property
     def publish_type(self) -> int:
-        """0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase."""
+        """0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand. Open visibility is 2 and 3."""
         ...
     @property
     def created_on(self) -> str: ...
@@ -810,7 +810,11 @@ class KappaApkClient:
     # --- auth ---
 
     def connect(self) -> dict[str, Any]:
-        """Authenticate and return user info + token as a dict."""
+        """Authenticate and return user info + token as a dict.
+
+        The body is ``loginId`` and ``passwd`` only. ``LOGIN_TEMPORARILY_BLOCKED`` (429)
+        and ``TOO_MANY_ACTIVE_DEVICES`` (403) clear the saved password.
+        """
         ...
 
     def close(self) -> None:
@@ -1065,7 +1069,8 @@ class KappaApkClient:
 
         Pages are 1-based; the response is ``{items, total, page, size, pages}``.
         *dataset_tags* is a comma-separated string, e.g. ``"vision,classification"``.
-        *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
+        *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand.
+        Open visibility is 2 and 3.
         *query_all* ``False`` limits results to datasets you own, are assigned to, or that are
         shared with you; the default (``True``) also lists the public catalogue.
         *selected_version_id* / *selected_version_no* add ``selectedVersionNo`` and
@@ -1405,7 +1410,8 @@ class KappaApkClient:
     ) -> dict[str, Any]:
         """Publish a version (requires archive ``buildStatus=ready`` on Kappa ≥ 2.11).
 
-        *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand, 4 Purchase.
+        *publish_type*: 0 Not Published, 1 Private, 2 Open Source, 3 Public on Demand.
+        Open visibility is 2 and 3. Any other value is rejected locally (``INVALID_PUBLISH_TYPE``).
         """
         ...
 
@@ -1811,5 +1817,9 @@ class KappaApkClient:
         data: Optional[str] = None,
         token: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Make a raw HTTP request against the gateway and return the JSON response."""
+        """Make a raw HTTP request against the gateway and return the JSON response.
+
+        Paths containing ``micro-services/v1`` or ``/api/v1`` are rejected before the
+        socket is opened. Supports GET, POST, PUT, PATCH, and DELETE.
+        """
         ...

@@ -22,7 +22,7 @@
 | `dataset_status` | `int` | 0 Deactive (мягкое удаление, восстановимо до истечения срока) · 1 Active · 2 New · 3 Under Development · 4 Upgrading · **5 Permanently deleted** (Kappa ≥ 2.13) |
 | `dataset_status_interp` | `str` | |
 | `dataset_tags` | `str` | Через запятую. **Первый** тег — предопределённый ML-тег для `dataset_type` (`dataset_tags_{type}`); далее можно custom |
-| `publish_type` | `int` | 0 Not Published · 1 Private · 2 Open Source · 3 Public on Demand · 4 Purchase |
+| `publish_type` | `int` | 0 Not Published · 1 Private · 2 Open Source · 3 Public on Demand. Открытая видимость — 2 и 3. Kappa ≥ 2.15 отклоняет любое другое значение (`INVALID_PUBLISH_TYPE`) |
 | `created_on` / `modified_on` | `str` | |
 | `version_no` | `str \| None` | Строка последней версии |
 
@@ -33,7 +33,7 @@
 | `id`, `user_id`, `dataset_id` | `int` |
 | `version_availability` | `int` (1 = доступна) |
 | `version_no`, `version_remark` | `str` |
-| `publish_type` | `int` |
+| `publish_type` | `int` | Те же значения, что у `Dataset.publish_type` (0–3) |
 | `created_on`, `modified_on` | `str` |
 
 ### `DatasetDownloadDetails`
