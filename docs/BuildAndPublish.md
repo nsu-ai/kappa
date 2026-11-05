@@ -22,7 +22,7 @@ Common flags:
 
 Output directory: **`dist/`** (wheels + optional `*.tar.gz` sdist).
 
-Python targets: **3.9–3.13** (builds for every interpreter found on the machine).
+Python targets: **3.9–3.14** (builds for every interpreter found on the machine).
 
 ---
 
@@ -77,9 +77,9 @@ CIBW_ARCHS_LINUX="x86_64 aarch64" cibuildwheel --output-dir dist
 
 | Workflow | Trigger | Action |
 |---|---|---|
-| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | push / PR | `cargo test`, clippy, maturin wheels (py3.9–3.13), sdist |
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | push / PR | `cargo test`, clippy, maturin wheels (py3.9–3.14), sdist |
 
-**PyPI:** `./build_wheel.sh --upload` (or `twine upload dist/*`). Create a GitHub Release tag (e.g. `v3.0.6`) to mark the cut.
+**PyPI:** `./build_wheel.sh --upload` (or `twine upload dist/*`). Create a GitHub Release tag (e.g. `v3.0.7`) to mark the cut.
 
 ---
 

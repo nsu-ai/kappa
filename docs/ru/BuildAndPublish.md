@@ -22,7 +22,7 @@
 
 Каталог вывода: **`dist/`** (wheels + опциональный sdist `*.tar.gz`).
 
-Целевые версии Python: **3.9–3.13** (сборка для каждого интерпретатора, найденного в системе).
+Целевые версии Python: **3.9–3.14** (сборка для каждого интерпретатора, найденного в системе).
 
 ---
 
@@ -77,9 +77,9 @@ CIBW_ARCHS_LINUX="x86_64 aarch64" cibuildwheel --output-dir dist
 
 | Workflow | Триггер | Действие |
 |---|---|---|
-| [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | push / PR | `cargo test`, clippy, maturin wheels (py3.9–3.13), sdist |
+| [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | push / PR | `cargo test`, clippy, maturin wheels (py3.9–3.14), sdist |
 
-**PyPI:** `./build_wheel.sh --upload` (или `twine upload dist/*`). Поставьте тег GitHub Release (например, `v3.0.6`).
+**PyPI:** `./build_wheel.sh --upload` (или `twine upload dist/*`). Поставьте тег GitHub Release (например, `v3.0.7`).
 
 ---
 

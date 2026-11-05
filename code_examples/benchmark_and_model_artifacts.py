@@ -11,6 +11,10 @@ Demonstrates:
 4. Writing an inference straight from predictions with ``write_model_inference``
 5. Artifact upload (large files switch to a resumable multipart session) and package download
 
+A benchmark report download is public only when the model version publish type is
+2 or 3. This example calls it with the signed-in session. Presigned artifact
+URLs are capped at 24 hours; a retry asks for a fresh URL.
+
 Usage::
 
     export KAPPA_URL=http://127.0.0.1:8060
@@ -174,7 +178,11 @@ def main() -> int:
         help="write an inference (and --model-path artifacts) for --model-id",
     )
     parser.add_argument("--upload", help="artifact file or directory to upload")
-    parser.add_argument("--file-category", type=int, help="1 Training 2 Inference 3 Model 4 Data 5 Other")
+    parser.add_argument(
+        "--file-category",
+        type=int,
+        help="1 Training · 2 Inference · 3 Model · 4 Data · 5 Other · 6 Prediction output (needs entity id + field name)",
+    )
     parser.add_argument("--download-artifacts", help="directory for per-file artifact download")
     args = parser.parse_args()
 

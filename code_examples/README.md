@@ -16,6 +16,14 @@ Upgrade after pulling repo changes:
 source code_examples/.venv/bin/activate
 ```
 
+## Base URL — API gateway, not the web UI
+
+Every example takes the **Traefik API gateway** URL (`--base-url` or `KAPPA_URL`):
+the local docker-compose stack serves it at `http://127.0.0.1:8060`, the NSU
+deployment at `https://kappa.nsu.ru:8061`. `https://kappa.nsu.ru` (port 443) is
+the React web UI — only some user routes are proxied there, so dataset calls
+return the HTML app page and the SDK fails with a JSON parse error.
+
 ## Examples
 
 ### `mnist_kappa_training_example.py`
@@ -60,9 +68,15 @@ python upload_torchvision_to_kappa_example.py --dataset fashion_mnist \
 **Purpose**: Demonstrates HTTP client authentication and API calls.
 
 ```bash
-./build_wheel.sh -i
-python3 code_examples/http_client_authentication_example.py
+python code_examples/http_client_authentication_example.py \
+  --base-url http://127.0.0.1:8060 --login-id admin --password '***'
 ```
+
+`make_request` needs `client.get_token()`. Do not call `connect()` again inside
+`with KappaApkClient(...)`: the context manager already signed in and cleared
+the password. Close the client when you are done — an account allows three
+active devices. `publish_type` is 0–3 (open visibility is 2 and 3). Entity
+filter pages are 1-based. Wait until a version build is ready before publish.
 
 ### `bulk_upload.py`
 
@@ -135,7 +149,7 @@ code_examples/
 ├── upload_torchvision_to_kappa_example.py
 ├── upload_kappa_helpers.py
 ├── http_client_authentication_example.py
-├── bulk_upload.py                       # Bulk upload + job progress (Kappa ≥ 2.10)
+├── bulk_upload.py                       # Bulk upload + job progress (Kappa ≥ 2.11)
 ├── dataset_operations_example.py        # Dataset CUD → entities → version flow
 ├── dataset_lifecycle_example.py         # Schema, mark-labeled, soft-delete/recover
 ├── setup_venv.sh

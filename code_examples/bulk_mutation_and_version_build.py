@@ -12,6 +12,11 @@ Demonstrates:
 On Kappa ≥ 2.13 a **single** mark-labeled ID may return a sync ``200`` (no ``jobId``)
 or ``422``. Kappa 2.11–2.12 always returns ``jobId`` for any size.
 
+On Kappa ≥ 2.16, self-verify includes every Labeled entity, including one that
+was verified before and sent back to Labeled. ``publish_type`` is 0–3
+(open visibility is 2 and 3). The session is closed on exit so the device
+slot is released.
+
 Usage::
 
     export KAPPA_URL=http://127.0.0.1:8060
@@ -49,26 +54,7 @@ def _job_id(start) -> str | None:
     return None
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset-id", type=int, required=True)
-    parser.add_argument("--mark-labeled-all", action="store_true")
-    parser.add_argument("--entity-ids", nargs="*", default=[])
-    parser.add_argument("--self-verify-pass", action="store_true")
-    parser.add_argument("--auto-verify", action="store_true")
-    parser.add_argument("--create-version", action="store_true")
-    parser.add_argument("--publish-type", type=int, default=1)
-    parser.add_argument("--download-package", action="store_true")
-    parser.add_argument("--timeout-secs", type=float, default=3600.0)
-    args = parser.parse_args()
-
-    print("SDK", version(), "| min backend", min_backend_version())
-    print("compat:", compatibility_info())
-
-    client = KappaApkClient(_env("KAPPA_URL"), _env("KAPPA_USER"), _env("KAPPA_PASSWORD"))
-    client.connect()
-    dataset_id = args.dataset_id
-
+def _run(client: KappaApkClient, args: argparse.Namespace, dataset_id: int) -> int:
     def on_mut(job):
         print(
             f"  mutation {job.job_type} {job.status} {job.phase} "
@@ -183,6 +169,36 @@ def main() -> int:
         print("package cache:", info.data_path, info.download_status)
 
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset-id", type=int, required=True)
+    parser.add_argument("--mark-labeled-all", action="store_true")
+    parser.add_argument("--entity-ids", nargs="*", default=[])
+    parser.add_argument("--self-verify-pass", action="store_true")
+    parser.add_argument("--auto-verify", action="store_true")
+    parser.add_argument("--create-version", action="store_true")
+    parser.add_argument(
+        "--publish-type",
+        type=int,
+        default=1,
+        choices=(0, 1, 2, 3),
+        help="0 Not Published · 1 Private · 2 Open Source · 3 Public on Demand",
+    )
+    parser.add_argument("--download-package", action="store_true")
+    parser.add_argument("--timeout-secs", type=float, default=3600.0)
+    args = parser.parse_args()
+
+    print("SDK", version(), "| min backend", min_backend_version())
+    print("compat:", compatibility_info())
+
+    client = KappaApkClient(_env("KAPPA_URL"), _env("KAPPA_USER"), _env("KAPPA_PASSWORD"))
+    client.connect()
+    try:
+        return _run(client, args, args.dataset_id)
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":

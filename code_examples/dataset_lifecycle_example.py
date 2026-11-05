@@ -135,8 +135,14 @@ def main() -> int:
         print(f"Dataset id={dataset_id} name={dataset_name}")
 
         # --- filter / list ---
-        listed = client.list_datasets(page=1, size=5, order_by="modifiedOn", order_keyword="DESC")
-        print("list_datasets sample keys:", list(listed.keys()) if isinstance(listed, dict) else type(listed))
+        listed = client.filter_datasets(
+            page=1,
+            size=5,
+            order_by="modifiedOn",
+            order_keyword="DESC",
+            query_all=False,
+        )
+        print("filter_datasets sample keys:", list(listed.keys()) if isinstance(listed, dict) else type(listed))
         filtered = client.filter_datasets(search=dataset_name or "", page=1, size=5)
         print("filter_datasets:", type(filtered).__name__)
 
@@ -153,7 +159,7 @@ def main() -> int:
             print("put_dataset_custom_schema:", put)
 
         # --- entities ---
-        page = client.filter_dataset_entities(dataset_id, page=0, size=5)
+        page = client.filter_dataset_entities(dataset_id, page=1, size=5)
         entity_id = args.entity_id or _first_entity_id(page)
         print("entity_id:", entity_id)
 

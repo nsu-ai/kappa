@@ -14,7 +14,7 @@ pip install kf-sdk
 import kappa_apk
 ```
 
-Сборки wheels публикуются для **Linux (manylinux)**, **macOS** (Intel + Apple Silicon) и **Windows**, Python **3.9–3.13**.
+Сборки wheels публикуются для **Linux (manylinux)**, **macOS** (Intel + Apple Silicon) и **Windows**, Python **3.9–3.14**.
 
 ### Из исходников (разработка)
 
@@ -69,7 +69,7 @@ with KappaApkClient(base_url, login_id, passwd) as client:
 
 ```python
 import kappa_apk
-print(kappa_apk.version())   # "3.0.6"
+print(kappa_apk.version())   # "3.0.7"
 ```
 
 ---

@@ -27,7 +27,7 @@ TARGET_VERSIONS=()
 DIST_DIR="dist"
 
 # Matches pyproject.toml requires-python = ">=3.9"
-SUPPORTED_VERSIONS=("3.9" "3.10" "3.11" "3.12" "3.13")
+SUPPORTED_VERSIONS=("3.9" "3.10" "3.11" "3.12" "3.13" "3.14")
 
 print_status()  { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
@@ -39,7 +39,7 @@ show_usage() {
 Usage: $0 [MODE] [OPTIONS]
 
 Build wheels (and optionally sdist) for kf-sdk (import kappa_apk) — Rust + PyO3.
-Targets Python 3.9–3.13; builds for every interpreter found on this machine.
+Targets Python 3.9–3.14; builds for every interpreter found on this machine.
 
 MODES (choose one):
     --local             Build only — write artifacts to dist/ (default)
@@ -48,7 +48,7 @@ MODES (choose one):
 OPTIONS:
     -t, --type TYPE     Build type: debug, release (default: release)
     -p, --platform PLAT Target platform: auto, linux, macos, windows (default: auto)
-    -v, --version VER   Build for one Python: 3.9, 3.10, 3.11, 3.12, or 3.13
+    -v, --version VER   Build for one Python: 3.9, 3.10, 3.11, 3.12, 3.13, or 3.14
     -c, --clean         Clean target/, dist/, build/ before building
     -s, --sdist         Include source distribution (default: on)
     --no-sdist          Wheels only (skip sdist)

@@ -251,6 +251,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--base-url",
         default=os.environ.get("KAPPA_BASE_URL", "http://127.0.0.1:8060"),
+        help=(
+            "Kappa API gateway (NSU deployment: https://kappa.nsu.ru:8061). "
+            "Do not pass the web UI at https://kappa.nsu.ru (default: %(default)s)"
+        ),
     )
     parser.add_argument("--login-id", default=os.environ.get("KAPPA_LOGIN_ID", "admin"))
     parser.add_argument("--password", default=os.environ.get("KAPPA_PASSWORD", ""))
@@ -267,7 +271,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--labeling-algo",
         default="default",
-        help="Kappa labelingAlgo per entity (default: default)",
+        help=(
+            "Kappa labelingAlgo per entity (default: default). "
+            "ML library files (.npy, .pt, .onnx, …) are accepted only when this is default"
+        ),
     )
     parser.add_argument(
         "--limit-per-class",
@@ -292,7 +299,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--create-version", action="store_true")
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--version-no", default="1.0.0")
-    parser.add_argument("--publish-type", type=int, default=0, choices=(0, 1, 2))
+    parser.add_argument(
+        "--publish-type",
+        type=int,
+        default=1,
+        choices=(0, 1, 2, 3),
+        help="0 Not Published · 1 Private · 2 Open Source · 3 Public on Demand",
+    )
     return parser.parse_args()
 
 
@@ -347,8 +360,9 @@ def main() -> int:
     KappaApkClient, NewDataset, NewDatasetEntity, NewDatasetVersion = import_kappa()
 
     with KappaApkClient(args.base_url, args.login_id, args.password) as client:
-        info = client.connect()
-        print(f"Connected as {info.get('user_name', info.get('userName', '?'))}")
+        # The context manager already called connect() and cleared the password.
+        profile = client.get_user_profile()
+        print(f"Connected as {profile.user_name}")
 
         dataset_id = get_or_create_dataset(
             client,
