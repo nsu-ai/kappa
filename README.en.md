@@ -1,7 +1,7 @@
 # kf-sdk (`import kappa_apk`)
 
 [![License BSD 3.0](https://img.shields.io/github/license/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/blob/main/LICENSE.md)
-![Python 3.9–3.13](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-green.svg)
+![Python 3.9–3.14](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-green.svg)
 [![PyPI version](https://img.shields.io/pypi/v/kf-sdk.svg)](https://pypi.org/project/kf-sdk/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/kf-sdk.svg)](https://pypi.org/project/kf-sdk/)
 [![GitHub release](https://img.shields.io/github/v/release/nsu-ai/kappa.svg)](https://github.com/nsu-ai/kappa/releases)
@@ -83,7 +83,7 @@ Three datasets are registered on the framework:
 pip install kf-sdk
 ```
 
-Pre-built wheels are published for **Linux (manylinux)**, **macOS** (Intel + Apple Silicon), and **Windows**, for Python **3.9–3.13**.
+Pre-built wheels are published for **Linux (manylinux)**, **macOS** (Intel + Apple Silicon), and **Windows**, for Python **3.9–3.14**.
 
 ```python
 import kappa_apk
@@ -117,7 +117,7 @@ maturin develop --release
 
 - Rust toolchain (`curl https://sh.rustup.rs | sh`)
 - `maturin >= 1.9` (`pip install maturin`)
-- Python 3.9–3.13
+- Python 3.9–3.14
 - Optional: `cibuildwheel` for cross-platform wheels (see [`docs/BuildAndPublish.md`](docs/BuildAndPublish.md))
 
 ---

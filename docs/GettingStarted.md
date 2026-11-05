@@ -17,7 +17,7 @@ print(kappa_apk.min_backend_version())  # "2.11.0" — this SDK needs Kappa ≥ 
 print(kappa_apk.compatibility_info())
 ```
 
-Wheels are published for **Linux (manylinux)**, **macOS** (Intel + Apple Silicon), and **Windows**, Python **3.9–3.13**.
+Wheels are published for **Linux (manylinux)**, **macOS** (Intel + Apple Silicon), and **Windows**, Python **3.9–3.14**.
 
 > **Backend dependency:** features such as bulk staging/retry, `archiveLayout`, entity `file_category`, and large archives require **Kappa-framework 2.11.0+**. Older gateways will fail in unclear ways on newer SDK calls.
 
