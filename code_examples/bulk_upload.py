@@ -52,7 +52,12 @@ def main() -> int:
     parser.add_argument("--labeling-algo", default="default")
     parser.add_argument("--source", default="apk-example")
     parser.add_argument("--bulk-split", default="train")
-    parser.add_argument("--strict", action="store_true", default=True)
+    parser.add_argument(
+        "--strict",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Validate the archive/CSV client-side before submit (default: true)",
+    )
     parser.add_argument("--check-permission", action="store_true")
     args = parser.parse_args()
 

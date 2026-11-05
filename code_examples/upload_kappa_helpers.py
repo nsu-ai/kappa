@@ -243,6 +243,8 @@ def upload_exported_images(
                 dataset_id,
                 entity,
                 file_paths=[str(image_path)],
+                file_category="input",
+                split=split,
             )
             if not api_response_ok(resp):
                 raise RuntimeError(f"Unexpected entity response: {resp!r}")
@@ -268,8 +270,20 @@ def maybe_version_and_publish(
 ) -> None:
     if create_version:
         ver = NewDatasetVersion(version_availability=1, version_remark=version_remark)
-        client.create_dataset_version(dataset_id, ver)
-        print("Created dataset version")
+        created = client.create_dataset_version(dataset_id, ver)
+        print("Created dataset version:", created)
+        if isinstance(created, dict):
+            version_no = (
+                created.get("versionNo") or created.get("version_no") or version_no
+            )
+            job_id = created.get("jobId") or created.get("job_id")
+            if job_id and publish:
+                build = client.wait_for_version_build_job(str(job_id))
+                print(f"Version build {build.status} ready={build.is_ready()}")
+                if not build.is_ready():
+                    raise RuntimeError(
+                        "Version archive is not ready; publish was not sent"
+                    )
     if publish:
         client.publish_dataset_version(dataset_id, version_no, publish_type)
         print(f"Published version {version_no} (publish_type={publish_type})")

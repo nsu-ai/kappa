@@ -2,6 +2,18 @@
 """
 Example usage of the kf-sdk client for authentication and API calls.
 
+``connect()`` sends only ``loginId`` and ``passwd``, then clears the saved
+password. ``make_request`` attaches a bearer only when ``token`` is passed, so
+use ``client.get_token()``. A later HTTP 401 means that session is dead
+(a password change revokes every session): create a new ``KappaApkClient``.
+Close the session when finished — an account is limited to three active devices.
+
+``--base-url`` must be the **API gateway**, never the web UI: the local
+docker-compose stack serves it at ``http://127.0.0.1:8060`` and the NSU
+deployment at ``https://kappa.nsu.ru:8061``. ``https://kappa.nsu.ru`` (port
+443) is the React app — only some user routes are proxied there, so dataset
+calls return the HTML page and the SDK fails with a JSON parse error.
+
 Run::
 
     python http_client_authentication_example.py \\
@@ -26,7 +38,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--base-url",
         default="http://127.0.0.1:8060",
-        help="Kappa API gateway base URL (default: %(default)s)",
+        help=(
+            "Kappa API gateway base URL — local stack: http://127.0.0.1:8060, "
+            "NSU deployment: https://kappa.nsu.ru:8061. "
+            "Do NOT pass the web UI (https://kappa.nsu.ru): its dataset routes "
+            "return the HTML app (default: %(default)s)"
+        ),
     )
     parser.add_argument(
         "--login-id",
@@ -73,11 +90,15 @@ def main() -> int:
 
     print("2. Making authenticated request...")
     try:
+        token = client.get_token()
+        if not token:
+            print("✗ No bearer token after connect()", file=sys.stderr)
+            return 1
         response = client.make_request(
             method="GET",
             endpoint="/user-micro-services/v2/users/me",
             data=None,
-            token=None,
+            token=token,
         )
         print("✓ Authenticated request successful!")
         print(f"   Response: {json.dumps(response, indent=2)}")

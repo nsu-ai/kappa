@@ -193,7 +193,7 @@ def main() -> int:
             print("Updated entity")
 
         # --- 6) Filter entities ---
-        page = client.filter_dataset_entities(dataset_id, page=0, size=10)
+        page = client.filter_dataset_entities(dataset_id, page=1, size=10)
         print("filter_dataset_entities keys:", list(page.keys()) if isinstance(page, dict) else type(page))
 
         # --- 7) Version ---
@@ -217,6 +217,13 @@ def main() -> int:
             )
 
         if args.publish and version_no:
+            job_id = (ver.get("jobId") or ver.get("job_id")) if isinstance(ver, dict) else None
+            if job_id:
+                build = client.wait_for_version_build_job(str(job_id))
+                print(f"Version build {build.status} ready={build.is_ready()}")
+                if not build.is_ready():
+                    print("Archive is not ready; skip publish", file=sys.stderr)
+                    return 1
             pub = client.publish_dataset_version(dataset_id, str(version_no), args.publish_type)
             print("publish_dataset_version:", pub)
 
