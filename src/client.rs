@@ -540,6 +540,37 @@ fn http_error_to_pyerr(status: reqwest::StatusCode, text: String) -> PyErr {
     crate::api_policy::http_error_to_pyerr(status, text)
 }
 
+/// User-Agent that identifies this SDK to the gateway, the way a browser does.
+///
+/// The user-service ignores `ipAddress` / `deviceInfo` in the login body (2.15+)
+/// and derives the per-session device string from request headers: `sec-ch-ua` /
+/// `sec-ch-ua-platform` hints, else the `User-Agent`. Without a User-Agent every
+/// Apk session stores empty device info, which also breaks the active-device
+/// count — the cap is keyed on `(ip_address, browser_info)` per
+/// `_enforce_device_cap`. The OS token is spelled so the server's parser maps it
+/// back ("Windows NT", "Mac OS X", "Linux").
+fn sdk_user_agent() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "Mac OS X".to_string(),
+        "windows" => "Windows NT".to_string(),
+        other => {
+            // Capitalize ("linux" -> "Linux") so the stored device string reads well;
+            // the server's parser lowercases before matching either way.
+            let mut chars = other.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        }
+    };
+    format!(
+        "kf-sdk/{} (kappa_apk; {} {})",
+        env!("CARGO_PKG_VERSION"),
+        os,
+        std::env::consts::ARCH
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Payload encoding helpers
 // ---------------------------------------------------------------------------
@@ -826,6 +857,7 @@ impl KappaApkClient {
         // reqwest 0.11 strips Authorization when a redirect changes host, so a presigned
         // object-storage URL does not receive the bearer. Do not install a policy that copies it.
         let client = Client::builder()
+            .user_agent(sdk_user_agent())
             .connect_timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| {
@@ -853,7 +885,9 @@ impl KappaApkClient {
     /// Authenticate with the server and return user info with token.
     ///
     /// The JSON body is only `loginId` and `passwd`. The server takes the client IP
-    /// from the connection. **429** `LOGIN_TEMPORARILY_BLOCKED` and **403**
+    /// from the connection and the session's device info from the request's
+    /// `User-Agent` (`kf-sdk/<version> (kappa_apk; <os> <arch>)`, set on every
+    /// request this client sends). **429** `LOGIN_TEMPORARILY_BLOCKED` and **403**
     /// `TOO_MANY_ACTIVE_DEVICES` clear the in-memory password so this object cannot
     /// retry the lockout. A successful login clears it as well.
     ///

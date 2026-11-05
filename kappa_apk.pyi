@@ -812,8 +812,11 @@ class KappaApkClient:
     def connect(self) -> dict[str, Any]:
         """Authenticate and return user info + token as a dict.
 
-        The body is ``loginId`` and ``passwd`` only. ``LOGIN_TEMPORARILY_BLOCKED`` (429)
-        and ``TOO_MANY_ACTIVE_DEVICES`` (403) clear the saved password.
+        The body is ``loginId`` and ``passwd`` only. The session's device info
+        comes from the ``User-Agent`` header (``kf-sdk/<version> (kappa_apk;
+        <os> <arch>)``), which the client sends on every request.
+        ``LOGIN_TEMPORARILY_BLOCKED`` (429) and ``TOO_MANY_ACTIVE_DEVICES``
+        (403) clear the saved password.
         """
         ...
 
